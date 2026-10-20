@@ -4,3 +4,5 @@ openpyxl
 plotly
 streamlit-authenticator
 pyyaml
+psycopg2-binary
+bcrypt
