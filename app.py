@@ -4,9 +4,10 @@ import plotly.express as px
 import psycopg2
 import bcrypt
 import json
+import io
 
 # --- إعدادات قاعدة البيانات (Neon) ---
-# ⚠️ ضع الرابط الجديد الخاص بك هنا (بعد تغيير كلمة المرور)
+# ⚠️ تذكر تغيير كلمة المرور هنا إذا قمت بتغييرها في Neon
 DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
@@ -43,7 +44,6 @@ def verify_user(email, password):
 def save_file_to_db(email, filename, df):
     conn = get_db_connection()
     cur = conn.cursor()
-    # تحويل البيانات إلى JSON
     json_data = df.to_json(orient='records')
     try:
         cur.execute(
@@ -161,7 +161,8 @@ if user_files:
     if selected_file_name != "-- اختر --":
         if st.sidebar.button("تحميل الملف المحدد"):
             json_data = file_options[selected_file_name]
-            st.session_state.df = pd.read_json(json_data)
+            # إصلاح قراءة JSON
+            st.session_state.df = pd.read_json(io.StringIO(json_data))
             st.rerun()
 else:
     st.sidebar.info("لا توجد ملفات سابقة.")
@@ -202,8 +203,8 @@ if uploaded_file is not None:
 if st.session_state.df is not None:
     df = st.session_state.df
     
-    # أزرار التصدير
-    csv = df.to_csv(index=False).encode('utf-8')
+    # أزرار التصدير (تم إصلاح الترميز هنا)
+    csv = df.to_csv(index=False).encode('utf-8-sig')
     st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
     
     st.divider()
