@@ -4,10 +4,12 @@ import plotly.express as px
 import psycopg2
 import bcrypt
 import json
+import io
+from fpdf import FPDF
 
 # --- إعدادات قاعدة البيانات ---
 DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
-ADMIN_PASS = "MySecretAdminPassword123" # كلمة مرور المدير
+ADMIN_PASS = "MySecretAdminPassword123"
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
@@ -65,6 +67,25 @@ def get_user_files(email):
     cur.close()
     conn.close()
     return files
+
+# --- دالة إنشاء تقرير PDF ---
+def create_pdf_report(insights, best_item, best_value):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(200, 10, txt="Data Analysis Report", ln=True, align='C')
+    pdf.set_font("Arial", size=12)
+    pdf.ln(10)
+    pdf.cell(200, 10, txt=f"Top Product: {best_item}", ln=True)
+    pdf.cell(200, 10, txt=f"Total Value: {best_value}", ln=True)
+    pdf.ln(10)
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(200, 10, txt="Smart Insights:", ln=True)
+    pdf.set_font("Arial", size=12)
+    for ins in insights:
+        pdf.multi_cell(0, 10, txt=f"- {ins}")
+        pdf.ln(2)
+    return pdf.output(dest='S').encode('latin-1')
 
 # --- إدارة الجلسة ---
 if 'logged_in' not in st.session_state:
@@ -149,26 +170,40 @@ t = {
         "upload": "📂 رفع ملف جديد (Excel/CSV)",
         "history": "🗂️ ملفاتي السابقة",
         "export": "📥 تحميل التقرير (CSV)",
+        "pdf": "📄 تحميل التقرير (PDF)",
         "clear": "🗑️ مسح الشاشة",
         "stats": "📊 لوحة القيادة",
         "charts": "📈 التحليل البياني",
         "data": "📋 البيانات الخام",
-        "insights": "🧠 التحليل الذكي (AI)"
+        "insights": "🧠 التحليل الذكي",
+        "demo": "📊 عرض بيانات تجريبية"
     },
     "English": {
         "title": "💼 Pro Data Analytics Platform",
         "upload": "📂 Upload New File (Excel/CSV)",
         "history": "🗂️ My Previous Files",
         "export": "📥 Export Report (CSV)",
+        "pdf": "📄 Export Report (PDF)",
         "clear": "🗑️ Clear Screen",
         "stats": "📊 Dashboard",
         "charts": "📈 Charts",
         "data": "📋 Raw Data",
-        "insights": "🧠 Smart Insights (AI)"
+        "insights": "🧠 Smart Insights",
+        "demo": "📊 Show Demo Data"
     }
 }[lang]
 
-# --- القائمة الجانبية ---
+# --- زر البيانات التجريبية ---
+if st.sidebar.button(t["demo"]):
+    demo_data = {
+        'Product': ['Shirt', 'Pants', 'Shoes', 'Jacket', 'Shirt', 'Shoes'],
+        'Amount': [1500, 2500, 4000, 6000, 1500, 4000],
+        'Month': ['Jan', 'Jan', 'Feb', 'Feb', 'Mar', 'Mar']
+    }
+    st.session_state.df = pd.DataFrame(demo_data)
+    st.rerun()
+
+# --- القائمة الجانبية: سجل الملفات ---
 st.sidebar.divider()
 st.sidebar.subheader(t["history"])
 user_files = get_user_files(st.session_state.user_email)
@@ -195,12 +230,11 @@ if st.sidebar.button("تسجيل الخروج"):
     st.session_state.df = None
     st.rerun()
 
-# --- زر لوحة المدير (مخفي في الشريط الجانبي) ---
+# --- لوحة المدير ---
 st.sidebar.divider()
 if st.sidebar.button("Admin Panel 👑"):
     st.session_state.show_admin = not st.session_state.show_admin
 
-# --- عرض لوحة المدير ---
 if st.session_state.get('show_admin'):
     pass_input = st.sidebar.text_input("أدخل كلمة مرور المدير", type="password")
     if pass_input == ADMIN_PASS:
@@ -212,7 +246,6 @@ if st.session_state.get('show_admin'):
         total_files = cur.fetchone()[0]
         cur.close()
         conn.close()
-        
         st.sidebar.success("مرحباً أيها المدير.")
         st.sidebar.info(f"👥 المستخدمون: {total_users}")
         st.sidebar.info(f"📂 الملفات: {total_files}")
@@ -229,6 +262,11 @@ if uploaded_file is not None:
             df = pd.read_csv(uploaded_file)
         else:
             df = pd.read_excel(uploaded_file)
+        
+        # --- تنظيف البيانات (Data Validation) ---
+        df = df.dropna() # حذف الصفوف الفارغة
+        df = df.drop_duplicates() # حذف التكرارات
+        
         if save_file_to_db(st.session_state.user_email, uploaded_file.name, df):
             st.session_state.df = df
             st.success(f"✅ {uploaded_file.name}")
@@ -255,20 +293,25 @@ if st.session_state.df is not None:
         st.divider()
         st.subheader(t["insights"])
         insights = []
-        insights.append(f"المنتج الأكثر ربحاً هو '{best_item}' بقيمة إجمالية {best_value:,.0f}. يجب التركيز على توفيره.")
+        insights.append(f"Top product is '{best_item}' with total value {best_value:,.0f}.")
         avg_value = df[numeric_cols[0]].mean()
-        insights.append(f"متوسط قيمة العمليات هو {avg_value:,.2f}. إذا كانت التكلفة أعلى من هذا، فأنت تخسر.")
+        insights.append(f"Average transaction value is {avg_value:,.2f}. If cost is higher, you are losing money.")
         if len(df) > 10:
-            insights.append("حجم البيانات جيد جداً، يمكنك الآن الاعتماد على هذه الأرقام لاتخاذ قراراتك القادمة.")
+            insights.append("Data volume is good. You can rely on these numbers for future decisions.")
         else:
-            insights.append("حجم البيانات صغير، قد لا تعكس النتائج الواقع بدقة. حاول جمع المزيد من البيانات.")
+            insights.append("Data volume is small. Results may not reflect reality. Collect more data.")
 
         for insight in insights:
             st.info(insight)
 
         st.divider()
-        csv = df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
+        col_csv, col_pdf = st.columns(2)
+        with col_csv:
+            csv = df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
+        with col_pdf:
+            pdf_bytes = create_pdf_report(insights, best_item, best_value)
+            st.download_button(label=t["pdf"], data=pdf_bytes, file_name='report.pdf', mime='application/pdf')
 
         st.subheader(t["charts"])
         c1, c2 = st.columns(2)
