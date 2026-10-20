@@ -1,0 +1,23 @@
+name: Database Backup
+on:
+  schedule:
+    - cron: '0 2 * * *'  # كل يوم الساعة 2 صباحاً
+  workflow_dispatch:       # يمكنك تشغيله يدوياً أيضاً
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install PostgreSQL client
+        run: sudo apt-get install -y postgresql-client
+
+      - name: Dump database
+        run: |
+          pg_dump ${{ secrets.DATABASE_URL }} > backup_$(date +%Y%m%d_%H%M%S).sql
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup
+          path: backup_*.sql
+          retention-days: 30 # يحفظ النسخة لمدة 30 يوماً
