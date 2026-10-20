@@ -160,8 +160,11 @@ if user_files:
     if selected_file_name != "-- اختر --":
         if st.sidebar.button("تحميل الملف المحدد"):
             json_data = file_options[selected_file_name]
-            # هذا هو السطر الذي تم إصلاحه
-            st.session_state.df = pd.DataFrame(json.loads(json_data))
+            # إصلاح جذري للتعامل مع أنواع البيانات
+            if isinstance(json_data, str):
+                st.session_state.df = pd.DataFrame(json.loads(json_data))
+            else:
+                st.session_state.df = pd.DataFrame(json_data)
             st.rerun()
 else:
     st.sidebar.info("لا توجد ملفات سابقة.")
