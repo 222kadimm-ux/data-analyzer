@@ -4,13 +4,10 @@ import plotly.express as px
 import psycopg2
 import bcrypt
 import json
-import io
-from fpdf import FPDF
-import datetime
 
 # --- إعدادات قاعدة البيانات ---
 DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
-ADMIN_EMAIL = "222kadimm@gmail.com"  # ضع بريدك هنا لتكون أنت المدير
+ADMIN_EMAIL = "222kadimm@gmail.com"
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
@@ -80,22 +77,6 @@ def get_admin_stats():
     conn.close()
     return total_users, total_files
 
-# --- دالة إنشاء تقرير PDF بسيط ---
-def generate_pdf_report(df, insights):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, txt="Data Analysis Report", ln=True, align='C')
-    pdf.cell(200, 10, txt=f"Generated on: {datetime.date.today()}", ln=True, align='C')
-    pdf.ln(10)
-    
-    pdf.set_font("Arial", size=10)
-    for insight in insights:
-        pdf.multi_cell(0, 10, txt=f"- {insight}")
-        pdf.ln(2)
-        
-    return pdf.output(dest='S').encode('latin-1')
-
 # --- إدارة الجلسة ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -142,7 +123,6 @@ t = {
         "upload": "📂 رفع ملف جديد (Excel/CSV)",
         "history": "🗂️ ملفاتي السابقة",
         "export": "📥 تحميل التقرير (CSV)",
-        "pdf": "📄 تحميل التقرير (PDF)",
         "clear": "🗑️ مسح الشاشة",
         "stats": "📊 لوحة القيادة",
         "charts": "📈 التحليل البياني",
@@ -155,7 +135,6 @@ t = {
         "upload": "📂 Upload New File (Excel/CSV)",
         "history": "🗂️ My Previous Files",
         "export": "📥 Export Report (CSV)",
-        "pdf": "📄 Export Report (PDF)",
         "clear": "🗑️ Clear Screen",
         "stats": "📊 Dashboard",
         "charts": "📈 Charts",
@@ -165,7 +144,7 @@ t = {
     }
 }[lang]
 
-# --- لوحة تحكم المدير (تظهر فقط إذا كان البريد هو ADMIN_EMAIL) ---
+# --- لوحة تحكم المدير ---
 if st.session_state.user_email == ADMIN_EMAIL:
     st.sidebar.divider()
     st.sidebar.subheader(t["admin"])
@@ -232,12 +211,11 @@ if st.session_state.df is not None:
         with c1: st.metric("Total", len(df))
         with c2: st.metric(f"Sum ({numeric_cols[0]})", f"{df[numeric_cols[0]].sum():,.0f}")
         
-        # حساب أفضل منتج
         best_item = df.groupby(categorical_cols[0])[numeric_cols[0]].sum().idxmax()
         best_value = df.groupby(categorical_cols[0])[numeric_cols[0]].sum().max()
         with c3: st.metric(f"Top ({categorical_cols[0]})", best_item)
 
-        # --- التحليل الذكي (بديل Gemini) ---
+        # --- التحليل الذكي ---
         st.divider()
         st.subheader(t["insights"])
         insights = []
@@ -254,15 +232,10 @@ if st.session_state.df is not None:
         for insight in insights:
             st.info(insight)
 
-        # --- أزرار التصدير ---
+        # --- التصدير ---
         st.divider()
-        col_pdf, col_csv = st.columns(2)
-        with col_csv:
-            csv = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
-        with col_pdf:
-            pdf_bytes = generate_pdf_report(df, insights)
-            st.download_button(label=t["pdf"], data=pdf_bytes, file_name='report.pdf', mime='application/pdf')
+        csv = df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
 
         # --- الرسوم البيانية ---
         st.subheader(t["charts"])
