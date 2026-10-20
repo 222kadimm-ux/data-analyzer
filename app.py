@@ -7,20 +7,18 @@ import json
 
 # --- إعدادات قاعدة البيانات ---
 DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
-ADMIN_EMAIL = "222kadimm@gmail.com"
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
-# --- دوال قاعدة البيانات ---
 def get_db_connection():
     return psycopg2.connect(DB_URL)
 
-def create_user(email, password):
+def create_user(email, password, security_answer):
     conn = get_db_connection()
     cur = conn.cursor()
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     try:
-        cur.execute("INSERT INTO users (email, password_hash) VALUES (%s, %s)", (email, hashed))
+        cur.execute("INSERT INTO users (email, password_hash, security_answer) VALUES (%s, %s, %s)", (email, hashed, security_answer))
         conn.commit()
         return True
     except psycopg2.errors.UniqueViolation:
@@ -51,7 +49,7 @@ def save_file_to_db(email, filename, df):
         )
         conn.commit()
         return True
-    except Exception as e:
+    except Exception:
         return False
     finally:
         cur.close()
@@ -66,17 +64,6 @@ def get_user_files(email):
     conn.close()
     return files
 
-def get_admin_stats():
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM users")
-    total_users = cur.fetchone()[0]
-    cur.execute("SELECT COUNT(*) FROM user_files")
-    total_files = cur.fetchone()[0]
-    cur.close()
-    conn.close()
-    return total_users, total_files
-
 # --- إدارة الجلسة ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -88,6 +75,7 @@ if 'df' not in st.session_state:
 # --- شاشة تسجيل الدخول ---
 if not st.session_state.logged_in:
     st.title("🔐 مرحباً بك في منصة تحليل البيانات")
+    
     tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
     
     with tab1:
@@ -100,13 +88,20 @@ if not st.session_state.logged_in:
                 st.rerun()
             else:
                 st.error("البريد الإلكتروني أو كلمة المرور غير صحيحة.")
+        
+        st.page_link("pages/2_Reset_Password.py", label="نسيت كلمة المرور؟", icon="🔑")
+                
     with tab2:
         new_email = st.text_input("البريد الإلكتروني الجديد", key="new_email")
         new_pass = st.text_input("كلمة المرور الجديدة", type="password", key="new_pass")
+        security_q = st.text_input("سؤال الأمان (مثلاً: اسم مدينتك المفضلة؟)", key="security_q")
+        
         if st.button("إنشاء الحساب"):
             if len(new_pass) < 6:
                 st.warning("كلمة المرور يجب أن تكون 6 أحرف على الأقل.")
-            elif create_user(new_email, new_pass):
+            elif not security_q:
+                st.warning("الرجاء إدخال إجابة سؤال الأمان.")
+            elif create_user(new_email, new_pass, security_q):
                 st.success("تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول.")
             else:
                 st.error("هذا البريد الإلكتروني مسجل مسبقاً.")
@@ -127,8 +122,7 @@ t = {
         "stats": "📊 لوحة القيادة",
         "charts": "📈 التحليل البياني",
         "data": "📋 البيانات الخام",
-        "insights": "🧠 التحليل الذكي (AI)",
-        "admin": "👑 لوحة المدير"
+        "insights": "🧠 التحليل الذكي (AI)"
     },
     "English": {
         "title": "💼 Pro Data Analytics Platform",
@@ -139,21 +133,11 @@ t = {
         "stats": "📊 Dashboard",
         "charts": "📈 Charts",
         "data": "📋 Raw Data",
-        "insights": "🧠 Smart Insights (AI)",
-        "admin": "👑 Admin Dashboard"
+        "insights": "🧠 Smart Insights (AI)"
     }
 }[lang]
 
-# --- لوحة تحكم المدير ---
-if st.session_state.user_email == ADMIN_EMAIL:
-    st.sidebar.divider()
-    st.sidebar.subheader(t["admin"])
-    if st.sidebar.button("عرض الإحصائيات"):
-        total_users, total_files = get_admin_stats()
-        st.sidebar.success(f"👥 المستخدمون: {total_users}")
-        st.sidebar.success(f"📂 الملفات: {total_files}")
-
-# --- القائمة الجانبية: سجل الملفات ---
+# --- القائمة الجانبية ---
 st.sidebar.divider()
 st.sidebar.subheader(t["history"])
 user_files = get_user_files(st.session_state.user_email)
@@ -180,7 +164,7 @@ if st.sidebar.button("تسجيل الخروج"):
     st.session_state.df = None
     st.rerun()
 
-# --- واجهة التطبيق الرئيسية ---
+# --- الواجهة الرئيسية ---
 st.title(t["title"])
 uploaded_file = st.file_uploader(t["upload"], type=["xlsx", "csv"])
 
@@ -198,14 +182,12 @@ if uploaded_file is not None:
 
 if st.session_state.df is not None:
     df = st.session_state.df
-    
     st.divider()
     
     numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
     categorical_cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
 
     if numeric_cols and categorical_cols:
-        # --- الإحصائيات ---
         st.subheader(t["stats"])
         c1, c2, c3 = st.columns(3)
         with c1: st.metric("Total", len(df))
@@ -215,15 +197,12 @@ if st.session_state.df is not None:
         best_value = df.groupby(categorical_cols[0])[numeric_cols[0]].sum().max()
         with c3: st.metric(f"Top ({categorical_cols[0]})", best_item)
 
-        # --- التحليل الذكي ---
         st.divider()
         st.subheader(t["insights"])
         insights = []
         insights.append(f"المنتج الأكثر ربحاً هو '{best_item}' بقيمة إجمالية {best_value:,.0f}. يجب التركيز على توفيره.")
-        
         avg_value = df[numeric_cols[0]].mean()
         insights.append(f"متوسط قيمة العمليات هو {avg_value:,.2f}. إذا كانت التكلفة أعلى من هذا، فأنت تخسر.")
-        
         if len(df) > 10:
             insights.append("حجم البيانات جيد جداً، يمكنك الآن الاعتماد على هذه الأرقام لاتخاذ قراراتك القادمة.")
         else:
@@ -232,12 +211,10 @@ if st.session_state.df is not None:
         for insight in insights:
             st.info(insight)
 
-        # --- التصدير ---
         st.divider()
         csv = df.to_csv(index=False).encode('utf-8-sig')
         st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
 
-        # --- الرسوم البيانية ---
         st.subheader(t["charts"])
         c1, c2 = st.columns(2)
         with c1: col_x = st.selectbox("Category", categorical_cols)
@@ -257,5 +234,3 @@ if st.session_state.df is not None:
 
         with st.expander(t["data"]):
             st.dataframe(df, use_container_width=True)
-    else:
-        st.warning("⚠️ البيانات غير كافية.")
