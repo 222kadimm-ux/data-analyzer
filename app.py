@@ -73,6 +73,20 @@ def get_user_files(email):
     conn.close()
     return files
 
+def delete_user_file(file_id, user_email):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM user_files WHERE id = %s AND user_email = %s", (file_id, user_email))
+        conn.commit()
+        return True
+    except Exception as e:
+        st.error(f"Error deleting file: {e}")
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
 # --- إدارة الجلسة ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -189,21 +203,26 @@ if st.sidebar.button(t["demo"]):
     st.session_state.df = pd.DataFrame(demo_data)
     st.rerun()
 
-# --- القائمة الجانبية: سجل الملفات ---
+# --- القائمة الجانبية: سجل الملفات (مع ميزة الحذف) ---
 st.sidebar.divider()
 st.sidebar.subheader(t["history"])
 user_files = get_user_files(st.session_state.user_email)
 if user_files:
-    file_options = {f"{f[1]} ({f[3].strftime('%Y-%m-%d')})": f[2] for f in user_files}
-    selected_file_name = st.sidebar.selectbox("اختر ملفاً لتحميله:", ["-- اختر --"] + list(file_options.keys()))
-    if selected_file_name != "-- اختر --":
-        if st.sidebar.button("تحميل الملف المحدد"):
-            json_data = file_options[selected_file_name]
-            if isinstance(json_data, str):
-                st.session_state.df = pd.DataFrame(json.loads(json_data))
-            else:
-                st.session_state.df = pd.DataFrame(json_data)
-            st.rerun()
+    for f in user_files:
+        col1, col2 = st.sidebar.columns([3, 1])
+        with col1:
+            if st.button(f"{f[1]} ({f[3].strftime('%Y-%m-%d')})", key=f"load_{f[0]}"):
+                json_data = f[2]
+                if isinstance(json_data, str):
+                    st.session_state.df = pd.DataFrame(json.loads(json_data))
+                else:
+                    st.session_state.df = pd.DataFrame(json_data)
+                st.rerun()
+        with col2:
+            if st.button("🗑️", key=f"del_{f[0]}"):
+                if delete_user_file(f[0], st.session_state.user_email):
+                    st.success("تم الحذف!")
+                    st.rerun()
 else:
     st.sidebar.info("لا توجد ملفات سابقة.")
 
