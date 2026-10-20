@@ -5,26 +5,21 @@ import psycopg2
 import bcrypt
 import json
 from groq import Groq
+import extra_streamlit_components as stx
 
 # --- إعدادات قاعدة البيانات ---
 DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
-# --- تصميم مخصص ---
-st.markdown("""
-    <style>
-    .stApp { background-color: #0e1117; }
-    div[data-testid="stMetric"] { background-color: #1e2130; padding: 15px; border-radius: 10px; border: 1px solid #3e4257; }
-    .stButton > button { border-radius: 8px; font-weight: bold; }
-    </style>
-""", unsafe_allow_html=True)
-
 # --- إعدادات الذكاء الاصطناعي (Groq) ---
 try:
     groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 except Exception as e:
     groq_client = None
+
+# --- إدارة الكوكيز (لحفظ الجلسة) ---
+cookie_manager = stx.CookieManager(key="cookie_manager")
 
 # --- دوال قاعدة البيانات ---
 def get_db_connection():
@@ -107,7 +102,7 @@ def delete_user_file(file_id, user_email):
         cur.close()
         conn.close()
 
-# --- إدارة الجلسة ---
+# --- إدارة الجلسة (Session) ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'user_email' not in st.session_state:
@@ -118,6 +113,18 @@ if 'show_reset' not in st.session_state:
     st.session_state.show_reset = False
 if 'show_privacy' not in st.session_state:
     st.session_state.show_privacy = False
+
+# --- استرجاع الجلسة من الكوكيز ---
+if not st.session_state.logged_in:
+    saved_session = cookie_manager.get(cookie="app_session")
+    if saved_session:
+        try:
+            session_data = json.loads(saved_session)
+            st.session_state.logged_in = True
+            st.session_state.user_email = session_data["email"]
+            st.rerun()
+        except:
+            pass # إذا كان الكوكي تالفاً، نتجاهله
 
 # --- شاشة تسجيل الدخول ---
 if not st.session_state.logged_in:
@@ -165,10 +172,17 @@ if not st.session_state.logged_in:
         with tab1:
             login_email = st.text_input("البريد الإلكتروني", key="login_email")
             login_pass = st.text_input("كلمة المرور", type="password", key="login_pass")
+            
+            remember_me = st.checkbox("تذكرني (حفظ الجلسة)")
+            
             if st.button("دخول", type="primary"):
                 if verify_user(login_email, login_pass):
                     st.session_state.logged_in = True
                     st.session_state.user_email = login_email
+                    if remember_me:
+                        # حفظ الكوكي لمدة 30 يوماً
+                        session_data = json.dumps({"email": login_email})
+                        cookie_manager.set("app_session", session_data, expires_at=None) # expires_at=None يعني صلاحية دائمة حتى إغلاق المتصفح، أو يمكن تحديد وقت
                     st.rerun()
                 else:
                     st.error("البريد الإلكتروني أو كلمة المرور غير صحيحة.")
@@ -209,6 +223,7 @@ t = {
         "upload": "📂 رفع ملف جديد (Excel/CSV)",
         "history": "🗂️ ملفاتي السابقة",
         "export": "📥 تحميل التقرير (CSV)",
+        "export_excel": "📥 تحميل التقرير (Excel)",
         "clear": "🗑️ مسح الشاشة",
         "stats": "📊 لوحة القيادة",
         "charts": "📈 التحليل البياني",
@@ -224,6 +239,7 @@ t = {
         "upload": "📂 Upload New File (Excel/CSV)",
         "history": "🗂️ My Previous Files",
         "export": "📥 Export Report (CSV)",
+        "export_excel": "📥 Export Report (Excel)",
         "clear": "🗑️ Clear Screen",
         "stats": "📊 Dashboard",
         "charts": "📈 Charts",
@@ -282,8 +298,11 @@ if st.sidebar.button(t["gdpr"]):
 if st.sidebar.button(t["clear"]):
     st.session_state.df = None
     st.rerun()
+
 if st.sidebar.button("تسجيل الخروج"):
     log_action(st.session_state.user_email, "تسجيل خروج")
+    # مسح الكوكي عند الخروج
+    cookie_manager.delete("app_session")
     st.session_state.logged_in = False
     st.session_state.user_email = None
     st.session_state.df = None
@@ -300,7 +319,6 @@ if uploaded_file is not None:
         else:
             df = pd.read_excel(uploaded_file)
         
-        # --- تنظيف البيانات (Data Validation) ---
         df = df.dropna()
         df = df.drop_duplicates()
         
@@ -319,7 +337,6 @@ if st.session_state.df is not None:
     search_query = st.text_input("ابحث عن منتج أو قيمة معينة (اتركه فارغاً لعرض الكل):")
     
     if search_query:
-        # تصفية البيانات بناءً على البحث في جميع الأعمدة النصية
         mask = df.astype(str).apply(lambda x: x.str.contains(search_query, case=False)).any(axis=1)
         df = df[mask]
         if df.empty:
@@ -358,8 +375,19 @@ if st.session_state.df is not None:
             st.info(insight)
 
         st.divider()
-        csv = df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
+        
+        # --- أزرار التصدير (CSV و Excel) ---
+        col_csv, col_excel = st.columns(2)
+        with col_csv:
+            csv = df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
+        with col_excel:
+            # تصدير Excel
+            excel_buffer = io.BytesIO()
+            with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Report')
+            excel_data = excel_buffer.getvalue()
+            st.download_button(label=t["export_excel"], data=excel_data, file_name='report.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
         st.subheader(t["charts"])
         c1, c2 = st.columns(2)
