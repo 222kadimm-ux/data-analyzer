@@ -7,9 +7,11 @@ import json
 
 # --- إعدادات قاعدة البيانات ---
 DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+ADMIN_PASS = "MySecretAdminPassword123" # كلمة مرور المدير
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
+# --- دوال قاعدة البيانات ---
 def get_db_connection():
     return psycopg2.connect(DB_URL)
 
@@ -71,40 +73,69 @@ if 'user_email' not in st.session_state:
     st.session_state.user_email = None
 if 'df' not in st.session_state:
     st.session_state.df = None
+if 'show_reset' not in st.session_state:
+    st.session_state.show_reset = False
+if 'show_admin' not in st.session_state:
+    st.session_state.show_admin = False
 
 # --- شاشة تسجيل الدخول ---
 if not st.session_state.logged_in:
     st.title("🔐 مرحباً بك في منصة تحليل البيانات")
     
-    tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
-    
-    with tab1:
-        login_email = st.text_input("البريد الإلكتروني", key="login_email")
-        login_pass = st.text_input("كلمة المرور", type="password", key="login_pass")
-        if st.button("دخول", type="primary"):
-            if verify_user(login_email, login_pass):
-                st.session_state.logged_in = True
-                st.session_state.user_email = login_email
+    if st.session_state.show_reset:
+        st.subheader("🔑 استعادة كلمة المرور")
+        reset_email = st.text_input("البريد الإلكتروني")
+        reset_answer = st.text_input("إجابة سؤال الأمان")
+        new_pass = st.text_input("كلمة المرور الجديدة", type="password")
+        if st.button("تغيير كلمة المرور"):
+            conn = get_db_connection()
+            cur = conn.cursor()
+            cur.execute("SELECT security_answer FROM users WHERE email = %s", (reset_email,))
+            result = cur.fetchone()
+            if result and result[0] == reset_answer:
+                hashed = bcrypt.hashpw(new_pass.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+                cur.execute("UPDATE users SET password_hash = %s WHERE email = %s", (hashed, reset_email))
+                conn.commit()
+                st.success("تم التغيير بنجاح! يمكنك العودة لتسجيل الدخول.")
+                st.session_state.show_reset = False
                 st.rerun()
             else:
-                st.error("البريد الإلكتروني أو كلمة المرور غير صحيحة.")
-        
-        st.page_link("pages/2_Reset_Password.py", label="نسيت كلمة المرور؟", icon="🔑")
-                
-    with tab2:
-        new_email = st.text_input("البريد الإلكتروني الجديد", key="new_email")
-        new_pass = st.text_input("كلمة المرور الجديدة", type="password", key="new_pass")
-        security_q = st.text_input("سؤال الأمان (مثلاً: اسم مدينتك المفضلة؟)", key="security_q")
-        
-        if st.button("إنشاء الحساب"):
-            if len(new_pass) < 6:
-                st.warning("كلمة المرور يجب أن تكون 6 أحرف على الأقل.")
-            elif not security_q:
-                st.warning("الرجاء إدخال إجابة سؤال الأمان.")
-            elif create_user(new_email, new_pass, security_q):
-                st.success("تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول.")
-            else:
-                st.error("هذا البريد الإلكتروني مسجل مسبقاً.")
+                st.error("بيانات خاطئة.")
+            cur.close()
+            conn.close()
+        if st.button("العودة"):
+            st.session_state.show_reset = False
+            st.rerun()
+    else:
+        tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
+        with tab1:
+            login_email = st.text_input("البريد الإلكتروني", key="login_email")
+            login_pass = st.text_input("كلمة المرور", type="password", key="login_pass")
+            if st.button("دخول", type="primary"):
+                if verify_user(login_email, login_pass):
+                    st.session_state.logged_in = True
+                    st.session_state.user_email = login_email
+                    st.rerun()
+                else:
+                    st.error("البريد الإلكتروني أو كلمة المرور غير صحيحة.")
+            
+            if st.button("نسيت كلمة المرور؟"):
+                st.session_state.show_reset = True
+                st.rerun()
+                    
+        with tab2:
+            new_email = st.text_input("البريد الإلكتروني الجديد", key="new_email")
+            new_pass = st.text_input("كلمة المرور الجديدة", type="password", key="new_pass")
+            security_q = st.text_input("سؤال الأمان (مثلاً: اسم مدينتك المفضلة؟)", key="security_q")
+            if st.button("إنشاء الحساب"):
+                if len(new_pass) < 6:
+                    st.warning("كلمة المرور يجب أن تكون 6 أحرف على الأقل.")
+                elif not security_q:
+                    st.warning("الرجاء إدخال إجابة سؤال الأمان.")
+                elif create_user(new_email, new_pass, security_q):
+                    st.success("تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول.")
+                else:
+                    st.error("هذا البريد الإلكتروني مسجل مسبقاً.")
     st.stop()
 
 # --- التطبيق بعد تسجيل الدخول ---
@@ -163,6 +194,30 @@ if st.sidebar.button("تسجيل الخروج"):
     st.session_state.user_email = None
     st.session_state.df = None
     st.rerun()
+
+# --- زر لوحة المدير (مخفي في الشريط الجانبي) ---
+st.sidebar.divider()
+if st.sidebar.button("Admin Panel 👑"):
+    st.session_state.show_admin = not st.session_state.show_admin
+
+# --- عرض لوحة المدير ---
+if st.session_state.get('show_admin'):
+    pass_input = st.sidebar.text_input("أدخل كلمة مرور المدير", type="password")
+    if pass_input == ADMIN_PASS:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users")
+        total_users = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM user_files")
+        total_files = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        
+        st.sidebar.success("مرحباً أيها المدير.")
+        st.sidebar.info(f"👥 المستخدمون: {total_users}")
+        st.sidebar.info(f"📂 الملفات: {total_files}")
+    elif pass_input:
+        st.sidebar.error("كلمة مرور خاطئة.")
 
 # --- الواجهة الرئيسية ---
 st.title(t["title"])
@@ -234,3 +289,5 @@ if st.session_state.df is not None:
 
         with st.expander(t["data"]):
             st.dataframe(df, use_container_width=True)
+    else:
+        st.warning("⚠️ البيانات غير كافية.")
