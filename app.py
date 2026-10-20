@@ -15,8 +15,8 @@ st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wid
 # --- إعدادات الذكاء الاصطناعي ---
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # تم تحديث اسم الموديل هنا
-    ai_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    # استخدام الموديل المستقر
+    ai_model = genai.GenerativeModel('gemini-pro')
 except Exception as e:
     ai_model = None
 
