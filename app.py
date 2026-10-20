@@ -8,7 +8,6 @@ import io
 import google.generativeai as genai
 
 # --- إعدادات قاعدة البيانات (Neon) ---
-# ⚠️ ضع الرابط الخاص بك هنا
 DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
@@ -16,7 +15,8 @@ st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wid
 # --- إعدادات الذكاء الاصطناعي ---
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+    # تم تحديث اسم الموديل هنا
+    ai_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 except Exception as e:
     ai_model = None
 
