@@ -1,31 +1,89 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import psycopg2
+import bcrypt
 
-# 1. إعدادات الصفحة
+# --- إعدادات قاعدة البيانات (Neon) ---
+DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+
+# --- إعدادات الصفحة ---
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
-# 2. إدارة الجلسة (هل المستخدم مسجل دخول أم لا)
+# --- دوال قاعدة البيانات ---
+def get_db_connection():
+    return psycopg2.connect(DB_URL)
+
+def create_user(email, password):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    try:
+        cur.execute("INSERT INTO users (email, password_hash) VALUES (%s, %s)", (email, hashed))
+        conn.commit()
+        return True
+    except psycopg2.errors.UniqueViolation:
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+def verify_user(email, password):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT password_hash FROM users WHERE email = %s", (email,))
+    result = cur.fetchone()
+    cur.close()
+    conn.close()
+    if result:
+        return bcrypt.checkpw(password.encode('utf-8'), result[0].encode('utf-8'))
+    return False
+
+# --- إدارة الجلسة ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
+if 'user_email' not in st.session_state:
+    st.session_state.user_email = None
 if 'df' not in st.session_state:
     st.session_state.df = None
 
-# 3. واجهة تسجيل الدخول البسيطة
+# --- شاشة تسجيل الدخول / إنشاء حساب ---
 if not st.session_state.logged_in:
-    st.title("🔐 تسجيل الدخول للمنصة")
-    st.write("أدخل كلمة المرور للوصول إلى لوحة التحكم.")
+    st.title("🔐 مرحباً بك في منصة تحليل البيانات")
     
-    password = st.text_input("كلمة المرور", type="password")
-    if st.button("تسجيل الدخول"):
-        if password == "admin123": # كلمة المرور هي admin123
-            st.session_state.logged_in = True
-            st.rerun()
-        else:
-            st.error("كلمة المرور خاطئة!")
-    st.stop() # إيقاف التطبيق هنا حتى يتم تسجيل الدخول
+    tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
+    
+    with tab1:
+        st.subheader("تسجيل الدخول")
+        login_email = st.text_input("البريد الإلكتروني", key="login_email")
+        login_pass = st.text_input("كلمة المرور", type="password", key="login_pass")
+        if st.button("دخول", type="primary"):
+            if verify_user(login_email, login_pass):
+                st.session_state.logged_in = True
+                st.session_state.user_email = login_email
+                st.rerun()
+            else:
+                st.error("البريد الإلكتروني أو كلمة المرور غير صحيحة.")
+                
+    with tab2:
+        st.subheader("إنشاء حساب جديد")
+        new_email = st.text_input("البريد الإلكتروني الجديد", key="new_email")
+        new_pass = st.text_input("كلمة المرور الجديدة", type="password", key="new_pass")
+        if st.button("إنشاء الحساب"):
+            if len(new_pass) < 6:
+                st.warning("كلمة المرور يجب أن تكون 6 أحرف على الأقل.")
+            elif create_user(new_email, new_pass):
+                st.success("تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول.")
+            else:
+                st.error("هذا البريد الإلكتروني مسجل مسبقاً.")
+    st.stop()
 
 # --- التطبيق يبدأ هنا بعد تسجيل الدخول ---
+st.sidebar.write(f"👤 {st.session_state.user_email}")
+if st.sidebar.button("تسجيل الخروج"):
+    st.session_state.logged_in = False
+    st.session_state.user_email = None
+    st.rerun()
 
 # الترجمة
 lang = st.sidebar.radio("Language / اللغة", ["العربية", "English"])
@@ -45,8 +103,7 @@ t = {
         "col_y": "القيمة",
         "bar": "المنتجات الأكثر ربحاً",
         "pie": "توزيع الحصص",
-        "data": "📋 البيانات الخام",
-        "logout": "🚪 تسجيل الخروج"
+        "data": "📋 البيانات الخام"
     },
     "English": {
         "title": "💼 Pro Data Analytics Platform",
@@ -63,20 +120,13 @@ t = {
         "col_y": "Value",
         "bar": "Most Profitable Items",
         "pie": "Share Distribution",
-        "data": "📋 Raw Data",
-        "logout": "🚪 Logout"
+        "data": "📋 Raw Data"
     }
 }[lang]
 
 st.title(t["title"])
 st.markdown(f"*{t['subtitle']}*")
 
-# زر تسجيل الخروج
-if st.sidebar.button(t["logout"]):
-    st.session_state.logged_in = False
-    st.rerun()
-
-# رفع الملف
 uploaded_file = st.file_uploader(t["upload"], type=["xlsx", "csv"])
 
 if uploaded_file is not None:
@@ -99,12 +149,7 @@ if st.session_state.df is not None:
             st.rerun()
     with col2:
         csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label=t["export"],
-            data=csv,
-            file_name='report.csv',
-            mime='text/csv',
-        )
+        st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
 
     st.divider()
     
@@ -136,7 +181,6 @@ if st.session_state.df is not None:
             fig_bar = px.bar(chart_data, x=col_x, y=col_y, color=col_y, color_continuous_scale='Teal')
             fig_bar.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='white')
             st.plotly_chart(fig_bar, use_container_width=True)
-
         with c2:
             fig_pie = px.pie(chart_data, names=col_x, values=col_y, hole=0.4)
             fig_pie.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='white')
