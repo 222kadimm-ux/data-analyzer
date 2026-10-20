@@ -69,28 +69,6 @@ def verify_user(email, password):
         return True
     return False
 
-def get_user_role(email):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT role FROM users WHERE email = %s", (email,))
-    result = cur.fetchone()
-    cur.close()
-    conn.close()
-    return result[0] if result else 'user'
-
-def promote_to_admin(email, secret_key):
-    # المفتاح السري موجود في إعدادات Streamlit
-    if secret_key == st.secrets["ADMIN_SECRET"]:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("UPDATE users SET role = 'admin' WHERE email = %s", (email,))
-        conn.commit()
-        cur.close()
-        conn.close()
-        log_action(email, "ترقية إلى مدير")
-        return True
-    return False
-
 def save_file_to_db(email, filename, df):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -223,9 +201,6 @@ if not st.session_state.logged_in:
 # --- التطبيق بعد تسجيل الدخول ---
 st.sidebar.write(f"👤 {st.session_state.user_email}")
 
-# التحقق من الدور
-user_role = get_user_role(st.session_state.user_email)
-
 # الترجمة
 lang = st.sidebar.radio("Language / اللغة", ["العربية", "English"])
 t = {
@@ -311,48 +286,6 @@ if st.sidebar.button("تسجيل الخروج"):
     st.session_state.user_email = None
     st.session_state.df = None
     st.rerun()
-
-# --- لوحة المدير (تظهر فقط إذا كان المستخدم مديراً) ---
-if user_role == 'admin':
-    st.sidebar.divider()
-    st.sidebar.subheader("👑 لوحة المدير")
-    
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM users")
-    total_users = cur.fetchone()[0]
-    cur.execute("SELECT COUNT(*) FROM user_files")
-    total_files = cur.fetchone()[0]
-    
-    st.sidebar.success("مرحباً أيها المدير.")
-    st.sidebar.info(f"👥 المستخدمون: {total_users}")
-    st.sidebar.info(f"📂 الملفات: {total_files}")
-    
-    st.sidebar.divider()
-    st.sidebar.subheader("آخر الأحداث")
-    cur.execute("SELECT user_email, action, created_at FROM audit_logs ORDER BY created_at DESC LIMIT 5")
-    logs = cur.fetchall()
-    for log in logs:
-        st.sidebar.text(f"{log[0]}: {log[1]} ({log[2].strftime('%H:%M')})")
-        
-    cur.close()
-    conn.close()
-    
-    # خيار ترقية حسابك (إذا كنت مستخدماً عادياً وتريد أن تصبح مديراً)
-    # هذا الخيار يظهر فقط إذا لم تكن مديراً
-    if user_role != 'admin':
-        st.sidebar.warning("أنت لست مديراً بعد.")
-else:
-    # خيار الترقية السريعة (يظهر للمستخدم العادي، ويطلب مفتاح المدير)
-    st.sidebar.divider()
-    with st.sidebar.expander("هل أنت مدير؟"):
-        secret_input = st.text_input("أدخل مفتاح المدير السري", type="password")
-        if st.button("ترقية حسابي إلى مدير"):
-            if promote_to_admin(st.session_state.user_email, secret_input):
-                st.success("تمت الترقية! يرجى تحديث الصفحة.")
-                st.rerun()
-            else:
-                st.error("مفتاح خاطئ.")
 
 # --- الواجهة الرئيسية ---
 st.title(t["title"])
