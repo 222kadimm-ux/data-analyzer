@@ -331,12 +331,16 @@ if st.session_state.df is not None:
                     أجب على السؤال باللغة العربية بناءً على البيانات. إذا لم تكن الإجابة موجودة، قل ذلك.
                     """
                     try:
+                        # جلب الموديلات المتاحة واختيار أول موديل نشط
+                        models = groq_client.models.list()
+                        available_model = models.data[0].id
+
                         chat_completion = groq_client.chat.completions.create(
                             messages=[
                                 {"role": "system", "content": "أنت محلل بيانات ذكي."},
                                 {"role": "user", "content": prompt}
                             ],
-                            model="llama-3.3-70b-versatile",
+                            model=available_model,
                         )
                         st.success(chat_completion.choices[0].message.content)
                     except Exception as e:
