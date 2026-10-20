@@ -4,6 +4,7 @@ import plotly.express as px
 import psycopg2
 import bcrypt
 import json
+import io
 from groq import Groq
 import extra_streamlit_components as stx
 
@@ -11,6 +12,15 @@ import extra_streamlit_components as stx
 DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
+
+# --- تصميم مخصص ---
+st.markdown("""
+    <style>
+    .stApp { background-color: #0e1117; }
+    div[data-testid="stMetric"] { background-color: #1e2130; padding: 15px; border-radius: 10px; border: 1px solid #3e4257; }
+    .stButton > button { border-radius: 8px; font-weight: bold; }
+    </style>
+""", unsafe_allow_html=True)
 
 # --- إعدادات الذكاء الاصطناعي (Groq) ---
 try:
@@ -102,7 +112,7 @@ def delete_user_file(file_id, user_email):
         cur.close()
         conn.close()
 
-# --- إدارة الجلسة (Session) ---
+# --- إدارة الجلسة ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 if 'user_email' not in st.session_state:
@@ -124,7 +134,7 @@ if not st.session_state.logged_in:
             st.session_state.user_email = session_data["email"]
             st.rerun()
         except:
-            pass # إذا كان الكوكي تالفاً، نتجاهله
+            pass
 
 # --- شاشة تسجيل الدخول ---
 if not st.session_state.logged_in:
@@ -180,9 +190,8 @@ if not st.session_state.logged_in:
                     st.session_state.logged_in = True
                     st.session_state.user_email = login_email
                     if remember_me:
-                        # حفظ الكوكي لمدة 30 يوماً
                         session_data = json.dumps({"email": login_email})
-                        cookie_manager.set("app_session", session_data, expires_at=None) # expires_at=None يعني صلاحية دائمة حتى إغلاق المتصفح، أو يمكن تحديد وقت
+                        cookie_manager.set("app_session", session_data)
                     st.rerun()
                 else:
                     st.error("البريد الإلكتروني أو كلمة المرور غير صحيحة.")
@@ -298,10 +307,8 @@ if st.sidebar.button(t["gdpr"]):
 if st.sidebar.button(t["clear"]):
     st.session_state.df = None
     st.rerun()
-
 if st.sidebar.button("تسجيل الخروج"):
     log_action(st.session_state.user_email, "تسجيل خروج")
-    # مسح الكوكي عند الخروج
     cookie_manager.delete("app_session")
     st.session_state.logged_in = False
     st.session_state.user_email = None
@@ -382,7 +389,6 @@ if st.session_state.df is not None:
             csv = df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
         with col_excel:
-            # تصدير Excel
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Report')
