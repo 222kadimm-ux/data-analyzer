@@ -4,4 +4,4 @@ openpyxl
 plotly
 psycopg2-binary
 bcrypt
-fpdf2
+groq

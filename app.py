@@ -4,13 +4,19 @@ import plotly.express as px
 import psycopg2
 import bcrypt
 import json
-import io
+from groq import Groq
 
 # --- إعدادات قاعدة البيانات ---
 DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 ADMIN_PASS = "MySecretAdminPassword123"
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
+
+# --- إعدادات الذكاء الاصطناعي (Groq) ---
+try:
+    groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+except Exception as e:
+    groq_client = None
 
 # --- دوال قاعدة البيانات ---
 def get_db_connection():
@@ -155,7 +161,8 @@ t = {
         "charts": "📈 التحليل البياني",
         "data": "📋 البيانات الخام",
         "insights": "🧠 التحليل الذكي",
-        "demo": "📊 عرض بيانات تجريبية"
+        "demo": "📊 عرض بيانات تجريبية",
+        "chat": "💬 المحادثة مع البيانات (AI)"
     },
     "English": {
         "title": "💼 Pro Data Analytics Platform",
@@ -167,7 +174,8 @@ t = {
         "charts": "📈 Charts",
         "data": "📋 Raw Data",
         "insights": "🧠 Smart Insights",
-        "demo": "📊 Show Demo Data"
+        "demo": "📊 Show Demo Data",
+        "chat": "💬 Chat with Data (AI)"
     }
 }[lang]
 
@@ -302,6 +310,39 @@ if st.session_state.df is not None:
             fig_pie = px.pie(chart_data, names=col_x, values=col_y, hole=0.4)
             fig_pie.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='white')
             st.plotly_chart(fig_pie, use_container_width=True)
+
+        # --- المحادثة مع البيانات (Chat with Data) ---
+        st.divider()
+        st.subheader(t["chat"])
+        st.write("اسأل عن بياناتك (مثال: ما هو أفضل منتج؟ كم إجمالي المبيعات؟)")
+        
+        user_question = st.text_input("اكتب سؤالك هنا...")
+        
+        if user_question:
+            if groq_client:
+                with st.spinner("الذكاء الاصطناعي يفكر..."):
+                    sample_data = df.head(10).to_json(orient='records')
+                    prompt = f"""
+                    أنت محلل بيانات. لدي بيانات مبيعات (عينة من 10 صفوف):
+                    {sample_data}
+                    
+                    المستخدم يسأل: "{user_question}"
+                    
+                    أجب على السؤال باللغة العربية بناءً على البيانات. إذا لم تكن الإجابة موجودة، قل ذلك.
+                    """
+                    try:
+                        chat_completion = groq_client.chat.completions.create(
+                            messages=[
+                                {"role": "system", "content": "أنت محلل بيانات ذكي."},
+                                {"role": "user", "content": prompt}
+                            ],
+                            model="llama3-8b-8192",
+                        )
+                        st.success(chat_completion.choices[0].message.content)
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+            else:
+                st.warning("يرجى التأكد من إضافة GROQ_API_KEY في إعدادات Streamlit Secrets.")
 
         with st.expander(t["data"]):
             st.dataframe(df, use_container_width=True)
