@@ -5,20 +5,14 @@ import psycopg2
 import bcrypt
 import json
 import io
-import google.generativeai as genai
+from fpdf import FPDF
+import datetime
 
-# --- إعدادات قاعدة البيانات (Neon) ---
+# --- إعدادات قاعدة البيانات ---
 DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+ADMIN_EMAIL = "222kadimm@gmail.com"  # ضع بريدك هنا لتكون أنت المدير
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
-
-# --- إعدادات الذكاء الاصطناعي ---
-try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # استخدام الموديل المستقر
-    ai_model = genai.GenerativeModel('gemini-pro')
-except Exception as e:
-    ai_model = None
 
 # --- دوال قاعدة البيانات ---
 def get_db_connection():
@@ -61,7 +55,6 @@ def save_file_to_db(email, filename, df):
         conn.commit()
         return True
     except Exception as e:
-        st.error(f"Error saving file: {e}")
         return False
     finally:
         cur.close()
@@ -75,6 +68,33 @@ def get_user_files(email):
     cur.close()
     conn.close()
     return files
+
+def get_admin_stats():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM users")
+    total_users = cur.fetchone()[0]
+    cur.execute("SELECT COUNT(*) FROM user_files")
+    total_files = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+    return total_users, total_files
+
+# --- دالة إنشاء تقرير PDF بسيط ---
+def generate_pdf_report(df, insights):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt="Data Analysis Report", ln=True, align='C')
+    pdf.cell(200, 10, txt=f"Generated on: {datetime.date.today()}", ln=True, align='C')
+    pdf.ln(10)
+    
+    pdf.set_font("Arial", size=10)
+    for insight in insights:
+        pdf.multi_cell(0, 10, txt=f"- {insight}")
+        pdf.ln(2)
+        
+    return pdf.output(dest='S').encode('latin-1')
 
 # --- إدارة الجلسة ---
 if 'logged_in' not in st.session_state:
@@ -122,26 +142,37 @@ t = {
         "upload": "📂 رفع ملف جديد (Excel/CSV)",
         "history": "🗂️ ملفاتي السابقة",
         "export": "📥 تحميل التقرير (CSV)",
+        "pdf": "📄 تحميل التقرير (PDF)",
         "clear": "🗑️ مسح الشاشة",
-        "ai_btn": "🤖 توليد نصائح الذكاء الاصطناعي",
-        "ai_loading": "جارٍ تحليل البيانات بواسطة الذكاء الاصطناعي...",
         "stats": "📊 لوحة القيادة",
         "charts": "📈 التحليل البياني",
-        "data": "📋 البيانات الخام"
+        "data": "📋 البيانات الخام",
+        "insights": "🧠 التحليل الذكي (AI)",
+        "admin": "👑 لوحة المدير"
     },
     "English": {
         "title": "💼 Pro Data Analytics Platform",
         "upload": "📂 Upload New File (Excel/CSV)",
         "history": "🗂️ My Previous Files",
         "export": "📥 Export Report (CSV)",
+        "pdf": "📄 Export Report (PDF)",
         "clear": "🗑️ Clear Screen",
-        "ai_btn": "🤖 Generate AI Insights",
-        "ai_loading": "AI is analyzing your data...",
         "stats": "📊 Dashboard",
         "charts": "📈 Charts",
-        "data": "📋 Raw Data"
+        "data": "📋 Raw Data",
+        "insights": "🧠 Smart Insights (AI)",
+        "admin": "👑 Admin Dashboard"
     }
 }[lang]
+
+# --- لوحة تحكم المدير (تظهر فقط إذا كان البريد هو ADMIN_EMAIL) ---
+if st.session_state.user_email == ADMIN_EMAIL:
+    st.sidebar.divider()
+    st.sidebar.subheader(t["admin"])
+    if st.sidebar.button("عرض الإحصائيات"):
+        total_users, total_files = get_admin_stats()
+        st.sidebar.success(f"👥 المستخدمون: {total_users}")
+        st.sidebar.success(f"📂 الملفات: {total_files}")
 
 # --- القائمة الجانبية: سجل الملفات ---
 st.sidebar.divider()
@@ -188,20 +219,52 @@ if uploaded_file is not None:
 
 if st.session_state.df is not None:
     df = st.session_state.df
-    csv = df.to_csv(index=False).encode('utf-8-sig')
-    st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
+    
     st.divider()
     
     numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
     categorical_cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
 
     if numeric_cols and categorical_cols:
+        # --- الإحصائيات ---
         st.subheader(t["stats"])
         c1, c2, c3 = st.columns(3)
         with c1: st.metric("Total", len(df))
         with c2: st.metric(f"Sum ({numeric_cols[0]})", f"{df[numeric_cols[0]].sum():,.0f}")
-        with c3: st.metric(f"Top ({categorical_cols[0]})", df.groupby(categorical_cols[0])[numeric_cols[0]].sum().idxmax())
+        
+        # حساب أفضل منتج
+        best_item = df.groupby(categorical_cols[0])[numeric_cols[0]].sum().idxmax()
+        best_value = df.groupby(categorical_cols[0])[numeric_cols[0]].sum().max()
+        with c3: st.metric(f"Top ({categorical_cols[0]})", best_item)
 
+        # --- التحليل الذكي (بديل Gemini) ---
+        st.divider()
+        st.subheader(t["insights"])
+        insights = []
+        insights.append(f"المنتج الأكثر ربحاً هو '{best_item}' بقيمة إجمالية {best_value:,.0f}. يجب التركيز على توفيره.")
+        
+        avg_value = df[numeric_cols[0]].mean()
+        insights.append(f"متوسط قيمة العمليات هو {avg_value:,.2f}. إذا كانت التكلفة أعلى من هذا، فأنت تخسر.")
+        
+        if len(df) > 10:
+            insights.append("حجم البيانات جيد جداً، يمكنك الآن الاعتماد على هذه الأرقام لاتخاذ قراراتك القادمة.")
+        else:
+            insights.append("حجم البيانات صغير، قد لا تعكس النتائج الواقع بدقة. حاول جمع المزيد من البيانات.")
+
+        for insight in insights:
+            st.info(insight)
+
+        # --- أزرار التصدير ---
+        st.divider()
+        col_pdf, col_csv = st.columns(2)
+        with col_csv:
+            csv = df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
+        with col_pdf:
+            pdf_bytes = generate_pdf_report(df, insights)
+            st.download_button(label=t["pdf"], data=pdf_bytes, file_name='report.pdf', mime='application/pdf')
+
+        # --- الرسوم البيانية ---
         st.subheader(t["charts"])
         c1, c2 = st.columns(2)
         with c1: col_x = st.selectbox("Category", categorical_cols)
@@ -218,30 +281,6 @@ if st.session_state.df is not None:
             fig_pie = px.pie(chart_data, names=col_x, values=col_y, hole=0.4)
             fig_pie.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='white')
             st.plotly_chart(fig_pie, use_container_width=True)
-
-        # --- قسم الذكاء الاصطناعي ---
-        st.divider()
-        st.subheader("🤖 AI Insights (Gemini)")
-        
-        if st.button(t["ai_btn"]):
-            if ai_model:
-                with st.spinner(t["ai_loading"]):
-                    sample_data = df.head(10).to_json(orient='records')
-                    prompt = f"""
-                    أنت خبير تحليل بيانات. لدي بيانات مبيعات (عينة):
-                    {sample_data}
-                    
-                    أعطني 3 نصائح تجارية قصيرة جداً ومباشرة باللغة العربية بناءً على هذه البيانات. 
-                    لا تشرح، فقط أعطني 3 نقاط.
-                    """
-                    try:
-                        response = ai_model.generate_content(prompt)
-                        st.success("تم توليد النصائح بنجاح!")
-                        st.markdown(response.text)
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-            else:
-                st.warning("يرجى التأكد من إضافة GEMINI_API_KEY في إعدادات Streamlit Secrets.")
 
         with st.expander(t["data"]):
             st.dataframe(df, use_container_width=True)
