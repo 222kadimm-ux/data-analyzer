@@ -216,7 +216,8 @@ t = {
         "insights": "🧠 التحليل الذكي",
         "demo": "📊 عرض بيانات تجريبية",
         "chat": "💬 المحادثة مع البيانات (AI)",
-        "gdpr": "📤 تصدير بياناتي (GDPR)"
+        "gdpr": "📤 تصدير بياناتي (GDPR)",
+        "search": "🔍 البحث والتصفية"
     },
     "English": {
         "title": "💼 Pro Data Analytics Platform",
@@ -230,7 +231,8 @@ t = {
         "insights": "🧠 Smart Insights",
         "demo": "📊 Show Demo Data",
         "chat": "💬 Chat with Data (AI)",
-        "gdpr": "📤 Export My Data (GDPR)"
+        "gdpr": "📤 Export My Data (GDPR)",
+        "search": "🔍 Search & Filter"
     }
 }[lang]
 
@@ -310,6 +312,22 @@ if uploaded_file is not None:
 
 if st.session_state.df is not None:
     df = st.session_state.df
+    st.divider()
+    
+    # --- ميزة البحث والتصفية ---
+    st.subheader(t["search"])
+    search_query = st.text_input("ابحث عن منتج أو قيمة معينة (اتركه فارغاً لعرض الكل):")
+    
+    if search_query:
+        # تصفية البيانات بناءً على البحث في جميع الأعمدة النصية
+        mask = df.astype(str).apply(lambda x: x.str.contains(search_query, case=False)).any(axis=1)
+        df = df[mask]
+        if df.empty:
+            st.warning("⚠️ لا توجد نتائج مطابقة لبحثك.")
+            st.stop()
+        else:
+            st.success(f"تم العثور على {len(df)} نتيجة.")
+            
     st.divider()
     
     numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
