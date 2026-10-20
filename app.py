@@ -3,11 +3,12 @@ import pandas as pd
 import plotly.express as px
 import psycopg2
 import bcrypt
+import json
 
 # --- إعدادات قاعدة البيانات (Neon) ---
+# ⚠️ ضع الرابط الجديد الخاص بك هنا (بعد تغيير كلمة المرور)
 DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
-# --- إعدادات الصفحة ---
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
 # --- دوال قاعدة البيانات ---
@@ -39,6 +40,34 @@ def verify_user(email, password):
         return bcrypt.checkpw(password.encode('utf-8'), result[0].encode('utf-8'))
     return False
 
+def save_file_to_db(email, filename, df):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    # تحويل البيانات إلى JSON
+    json_data = df.to_json(orient='records')
+    try:
+        cur.execute(
+            "INSERT INTO user_files (user_email, file_name, file_data) VALUES (%s, %s, %s)",
+            (email, filename, json_data)
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        st.error(f"Error saving file: {e}")
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+def get_user_files(email):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, file_name, file_data, created_at FROM user_files WHERE user_email = %s ORDER BY created_at DESC", (email,))
+    files = cur.fetchall()
+    cur.close()
+    conn.close()
+    return files
+
 # --- إدارة الجلسة ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -47,14 +76,13 @@ if 'user_email' not in st.session_state:
 if 'df' not in st.session_state:
     st.session_state.df = None
 
-# --- شاشة تسجيل الدخول / إنشاء حساب ---
+# --- شاشة تسجيل الدخول ---
 if not st.session_state.logged_in:
     st.title("🔐 مرحباً بك في منصة تحليل البيانات")
     
     tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
     
     with tab1:
-        st.subheader("تسجيل الدخول")
         login_email = st.text_input("البريد الإلكتروني", key="login_email")
         login_pass = st.text_input("كلمة المرور", type="password", key="login_pass")
         if st.button("دخول", type="primary"):
@@ -66,7 +94,6 @@ if not st.session_state.logged_in:
                 st.error("البريد الإلكتروني أو كلمة المرور غير صحيحة.")
                 
     with tab2:
-        st.subheader("إنشاء حساب جديد")
         new_email = st.text_input("البريد الإلكتروني الجديد", key="new_email")
         new_pass = st.text_input("كلمة المرور الجديدة", type="password", key="new_pass")
         if st.button("إنشاء الحساب"):
@@ -78,12 +105,8 @@ if not st.session_state.logged_in:
                 st.error("هذا البريد الإلكتروني مسجل مسبقاً.")
     st.stop()
 
-# --- التطبيق يبدأ هنا بعد تسجيل الدخول ---
+# --- التطبيق بعد تسجيل الدخول ---
 st.sidebar.write(f"👤 {st.session_state.user_email}")
-if st.sidebar.button("تسجيل الخروج"):
-    st.session_state.logged_in = False
-    st.session_state.user_email = None
-    st.rerun()
 
 # الترجمة
 lang = st.sidebar.radio("Language / اللغة", ["العربية", "English"])
@@ -91,9 +114,10 @@ t = {
     "العربية": {
         "title": "💼 منصة تحليل البيانات الاحترافية",
         "subtitle": "ارفع ملفك، وقم بتحليله فوراً.",
-        "upload": "📂 رفع ملف (Excel/CSV)",
+        "upload": "📂 رفع ملف جديد (Excel/CSV)",
+        "history": "🗂️ ملفاتي السابقة",
         "export": "📥 تحميل التقرير (CSV)",
-        "clear": "🗑️ مسح الملف",
+        "clear": "🗑️ مسح الشاشة",
         "stats": "📊 لوحة القيادة",
         "total_ops": "إجمالي العمليات",
         "total_val": "إجمالي القيمة",
@@ -108,9 +132,10 @@ t = {
     "English": {
         "title": "💼 Pro Data Analytics Platform",
         "subtitle": "Upload your file and analyze instantly.",
-        "upload": "📂 Upload (Excel/CSV)",
+        "upload": "📂 Upload New File (Excel/CSV)",
+        "history": "🗂️ My Previous Files",
         "export": "📥 Export Report (CSV)",
-        "clear": "🗑️ Clear File",
+        "clear": "🗑️ Clear Screen",
         "stats": "📊 Dashboard",
         "total_ops": "Total Operations",
         "total_val": "Total Value",
@@ -124,6 +149,34 @@ t = {
     }
 }[lang]
 
+# --- القائمة الجانبية: سجل الملفات ---
+st.sidebar.divider()
+st.sidebar.subheader(t["history"])
+user_files = get_user_files(st.session_state.user_email)
+
+if user_files:
+    file_options = {f"{f[1]} ({f[3].strftime('%Y-%m-%d')})": f[2] for f in user_files}
+    selected_file_name = st.sidebar.selectbox("اختر ملفاً لتحميله:", ["-- اختر --"] + list(file_options.keys()))
+    
+    if selected_file_name != "-- اختر --":
+        if st.sidebar.button("تحميل الملف المحدد"):
+            json_data = file_options[selected_file_name]
+            st.session_state.df = pd.read_json(json_data)
+            st.rerun()
+else:
+    st.sidebar.info("لا توجد ملفات سابقة.")
+
+if st.sidebar.button(t["clear"]):
+    st.session_state.df = None
+    st.rerun()
+
+if st.sidebar.button("تسجيل الخروج"):
+    st.session_state.logged_in = False
+    st.session_state.user_email = None
+    st.session_state.df = None
+    st.rerun()
+
+# --- واجهة التطبيق الرئيسية ---
 st.title(t["title"])
 st.markdown(f"*{t['subtitle']}*")
 
@@ -132,25 +185,27 @@ uploaded_file = st.file_uploader(t["upload"], type=["xlsx", "csv"])
 if uploaded_file is not None:
     try:
         if uploaded_file.name.endswith('.csv'):
-            st.session_state.df = pd.read_csv(uploaded_file)
+            df = pd.read_csv(uploaded_file)
         else:
-            st.session_state.df = pd.read_excel(uploaded_file)
-        st.success(f"✅ {uploaded_file.name}")
+            df = pd.read_excel(uploaded_file)
+        
+        # حفظ الملف في قاعدة البيانات
+        if save_file_to_db(st.session_state.user_email, uploaded_file.name, df):
+            st.session_state.df = df
+            st.success(f"✅ تم رفع وحفظ {uploaded_file.name} بنجاح!")
+        else:
+            st.warning("تم التحليل ولكن تعذر حفظ الملف في السجل.")
+            
     except Exception as e:
         st.error(f"Error: {e}")
 
 if st.session_state.df is not None:
     df = st.session_state.df
     
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button(t["clear"]):
-            st.session_state.df = None
-            st.rerun()
-    with col2:
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
-
+    # أزرار التصدير
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
+    
     st.divider()
     
     numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
