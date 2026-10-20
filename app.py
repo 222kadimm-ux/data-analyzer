@@ -7,7 +7,6 @@ import json
 import io
 
 # --- إعدادات قاعدة البيانات (Neon) ---
-# ⚠️ تذكر تغيير كلمة المرور هنا إذا قمت بتغييرها في Neon
 DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
@@ -161,8 +160,8 @@ if user_files:
     if selected_file_name != "-- اختر --":
         if st.sidebar.button("تحميل الملف المحدد"):
             json_data = file_options[selected_file_name]
-            # إصلاح قراءة JSON
-            st.session_state.df = pd.read_json(io.StringIO(json_data))
+            # هذا هو السطر الذي تم إصلاحه
+            st.session_state.df = pd.DataFrame(json.loads(json_data))
             st.rerun()
 else:
     st.sidebar.info("لا توجد ملفات سابقة.")
@@ -203,7 +202,7 @@ if uploaded_file is not None:
 if st.session_state.df is not None:
     df = st.session_state.df
     
-    # أزرار التصدير (تم إصلاح الترميز هنا)
+    # أزرار التصدير
     csv = df.to_csv(index=False).encode('utf-8-sig')
     st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
     
