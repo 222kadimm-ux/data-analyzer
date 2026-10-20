@@ -12,18 +12,18 @@ st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wid
 with open('config.yaml') as file:
     config = yaml.load(file, Loader=SafeLoader)
 
+# 3. تهيئة نظام المصادقة (تم إزالة preauthorized لحل الخطأ)
 authenticator = stauth.Authenticate(
     config['credentials'],
     config['cookie']['name'],
     config['cookie']['key'],
-    config['cookie']['expiry_days'],
-    config['preauthorized']
+    config['cookie']['expiry_days']
 )
 
-# 3. عرض شاشة تسجيل الدخول
-name, authentication_status, username = authenticator.login('Login', 'main')
+# 4. عرض شاشة تسجيل الدخول
+name, authentication_status, username = authenticator.login()
 
-# 4. إدارة الجلسة
+# 5. إدارة الجلسة
 if 'df' not in st.session_state:
     st.session_state.df = None
 
