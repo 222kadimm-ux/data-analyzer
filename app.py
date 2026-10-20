@@ -12,6 +12,15 @@ ADMIN_PASS = "MySecretAdminPassword123"
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
+# --- تصميم مخصص ---
+st.markdown("""
+    <style>
+    .stApp { background-color: #0e1117; }
+    div[data-testid="stMetric"] { background-color: #1e2130; padding: 15px; border-radius: 10px; border: 1px solid #3e4257; }
+    .stButton > button { border-radius: 8px; font-weight: bold; }
+    </style>
+""", unsafe_allow_html=True)
+
 # --- إعدادات الذكاء الاصطناعي (Groq) ---
 try:
     groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
@@ -22,6 +31,18 @@ except Exception as e:
 def get_db_connection():
     return psycopg2.connect(DB_URL)
 
+def log_action(email, action):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("INSERT INTO audit_logs (user_email, action) VALUES (%s, %s)", (email, action))
+        conn.commit()
+    except Exception as e:
+        pass # نتجاهل الخطأ إذا فشل التسجيل
+    finally:
+        cur.close()
+        conn.close()
+
 def create_user(email, password, security_answer):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -29,6 +50,7 @@ def create_user(email, password, security_answer):
     try:
         cur.execute("INSERT INTO users (email, password_hash, security_answer) VALUES (%s, %s, %s)", (email, hashed, security_answer))
         conn.commit()
+        log_action(email, "تسجيل حساب جديد")
         return True
     except psycopg2.errors.UniqueViolation:
         return False
@@ -43,8 +65,9 @@ def verify_user(email, password):
     result = cur.fetchone()
     cur.close()
     conn.close()
-    if result:
-        return bcrypt.checkpw(password.encode('utf-8'), result[0].encode('utf-8'))
+    if result and bcrypt.checkpw(password.encode('utf-8'), result[0].encode('utf-8')):
+        log_action(email, "تسجيل دخول ناجح")
+        return True
     return False
 
 def save_file_to_db(email, filename, df):
@@ -52,11 +75,9 @@ def save_file_to_db(email, filename, df):
     cur = conn.cursor()
     json_data = df.to_json(orient='records')
     try:
-        cur.execute(
-            "INSERT INTO user_files (user_email, file_name, file_data) VALUES (%s, %s, %s)",
-            (email, filename, json_data)
-        )
+        cur.execute("INSERT INTO user_files (user_email, file_name, file_data) VALUES (%s, %s, %s)", (email, filename, json_data))
         conn.commit()
+        log_action(email, f"رفع ملف: {filename}")
         return True
     except Exception:
         return False
@@ -79,9 +100,9 @@ def delete_user_file(file_id, user_email):
     try:
         cur.execute("DELETE FROM user_files WHERE id = %s AND user_email = %s", (file_id, user_email))
         conn.commit()
+        log_action(user_email, f"حذف ملف برقم {file_id}")
         return True
     except Exception as e:
-        st.error(f"Error deleting file: {e}")
         return False
     finally:
         cur.close()
@@ -98,6 +119,8 @@ if 'show_reset' not in st.session_state:
     st.session_state.show_reset = False
 if 'show_admin' not in st.session_state:
     st.session_state.show_admin = False
+if 'show_privacy' not in st.session_state:
+    st.session_state.show_privacy = False
 
 # --- شاشة تسجيل الدخول ---
 if not st.session_state.logged_in:
@@ -117,7 +140,8 @@ if not st.session_state.logged_in:
                 hashed = bcrypt.hashpw(new_pass.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
                 cur.execute("UPDATE users SET password_hash = %s WHERE email = %s", (hashed, reset_email))
                 conn.commit()
-                st.success("تم التغيير بنجاح! يمكنك العودة لتسجيل الدخول.")
+                log_action(reset_email, "تغيير كلمة المرور")
+                st.success("تم التغيير بنجاح!")
                 st.session_state.show_reset = False
                 st.rerun()
             else:
@@ -126,6 +150,18 @@ if not st.session_state.logged_in:
             conn.close()
         if st.button("العودة"):
             st.session_state.show_reset = False
+            st.rerun()
+    elif st.session_state.show_privacy:
+        st.subheader("📜 سياسة الخصوصية وشروط الاستخدام")
+        st.write("""
+        **سياسة الخصوصية:**
+        نحن نحترم خصوصيتك. جميع البيانات التي ترفعها يتم تشفيرها وتخزينها في قاعدة بيانات آمنة. لا نشارك بياناتك مع أي طرف ثالث. يمكنك حذف بياناتك في أي وقت من خلال لوحة التحكم.
+        
+        **شروط الاستخدام:**
+        هذا التطبيق مخصص لتحليل البيانات. يمنع استخدامه لأي أغراض غير قانونية. نحن غير مسؤولين عن أي قرارات تتخذها بناءً على تحليلات المنصة.
+        """)
+        if st.button("العودة"):
+            st.session_state.show_privacy = False
             st.rerun()
     else:
         tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
@@ -140,9 +176,15 @@ if not st.session_state.logged_in:
                 else:
                     st.error("البريد الإلكتروني أو كلمة المرور غير صحيحة.")
             
-            if st.button("نسيت كلمة المرور؟"):
-                st.session_state.show_reset = True
-                st.rerun()
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("نسيت كلمة المرور؟"):
+                    st.session_state.show_reset = True
+                    st.rerun()
+            with col2:
+                if st.button("سياسة الخصوصية"):
+                    st.session_state.show_privacy = True
+                    st.rerun()
                     
         with tab2:
             new_email = st.text_input("البريد الإلكتروني الجديد", key="new_email")
@@ -176,7 +218,8 @@ t = {
         "data": "📋 البيانات الخام",
         "insights": "🧠 التحليل الذكي",
         "demo": "📊 عرض بيانات تجريبية",
-        "chat": "💬 المحادثة مع البيانات (AI)"
+        "chat": "💬 المحادثة مع البيانات (AI)",
+        "gdpr": "📤 تصدير بياناتي (GDPR)"
     },
     "English": {
         "title": "💼 Pro Data Analytics Platform",
@@ -189,7 +232,8 @@ t = {
         "data": "📋 Raw Data",
         "insights": "🧠 Smart Insights",
         "demo": "📊 Show Demo Data",
-        "chat": "💬 Chat with Data (AI)"
+        "chat": "💬 Chat with Data (AI)",
+        "gdpr": "📤 Export My Data (GDPR)"
     }
 }[lang]
 
@@ -226,10 +270,21 @@ if user_files:
 else:
     st.sidebar.info("لا توجد ملفات سابقة.")
 
+# --- GDPR Export ---
+if st.sidebar.button(t["gdpr"]):
+    all_data = {"files": [{"name": f[1], "data": f[2]} for f in user_files]}
+    st.sidebar.download_button(
+        label="تحميل البيانات",
+        data=json.dumps(all_data, ensure_ascii=False, indent=4),
+        file_name=f"my_data_{st.session_state.user_email}.json",
+        mime="application/json"
+    )
+
 if st.sidebar.button(t["clear"]):
     st.session_state.df = None
     st.rerun()
 if st.sidebar.button("تسجيل الخروج"):
+    log_action(st.session_state.user_email, "تسجيل خروج")
     st.session_state.logged_in = False
     st.session_state.user_email = None
     st.session_state.df = None
@@ -249,11 +304,20 @@ if st.session_state.get('show_admin'):
         total_users = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM user_files")
         total_files = cur.fetchone()[0]
-        cur.close()
-        conn.close()
+        
         st.sidebar.success("مرحباً أيها المدير.")
         st.sidebar.info(f"👥 المستخدمون: {total_users}")
         st.sidebar.info(f"📂 الملفات: {total_files}")
+        
+        st.sidebar.divider()
+        st.sidebar.subheader("آخر الأحداث")
+        cur.execute("SELECT user_email, action, created_at FROM audit_logs ORDER BY created_at DESC LIMIT 5")
+        logs = cur.fetchall()
+        for log in logs:
+            st.sidebar.text(f"{log[0]}: {log[1]} ({log[2].strftime('%H:%M')})")
+            
+        cur.close()
+        conn.close()
     elif pass_input:
         st.sidebar.error("كلمة مرور خاطئة.")
 
@@ -269,8 +333,8 @@ if uploaded_file is not None:
             df = pd.read_excel(uploaded_file)
         
         # --- تنظيف البيانات (Data Validation) ---
-        df = df.dropna() # حذف الصفوف الفارغة
-        df = df.drop_duplicates() # حذف التكرارات
+        df = df.dropna()
+        df = df.drop_duplicates()
         
         if save_file_to_db(st.session_state.user_email, uploaded_file.name, df):
             st.session_state.df = df
@@ -350,10 +414,8 @@ if st.session_state.df is not None:
                     أجب على السؤال باللغة العربية بناءً على البيانات. إذا لم تكن الإجابة موجودة، قل ذلك.
                     """
                     try:
-                        # جلب الموديلات المتاحة واختيار أول موديل نشط
                         models = groq_client.models.list()
                         available_model = models.data[0].id
-
                         chat_completion = groq_client.chat.completions.create(
                             messages=[
                                 {"role": "system", "content": "أنت محلل بيانات ذكي."},
