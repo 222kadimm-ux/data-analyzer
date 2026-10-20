@@ -336,7 +336,7 @@ if st.session_state.df is not None:
                                 {"role": "system", "content": "أنت محلل بيانات ذكي."},
                                 {"role": "user", "content": prompt}
                             ],
-                            model="llama3-8b-8192",
+                            model="llama-3.1-8b-instant",
                         )
                         st.success(chat_completion.choices[0].message.content)
                     except Exception as e:
