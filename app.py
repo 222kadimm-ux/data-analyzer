@@ -265,7 +265,7 @@ st.title(t["title"])
 uploaded_file = st.file_uploader(t["upload"], type=["xlsx", "csv"])
 
 if uploaded_file is not None:
-    with st.spinner("جارٍ تحليل الملف..."): # ميزة Spinner
+    with st.spinner("جارٍ تحليل الملف..."):
         try:
             if uploaded_file.name.endswith('.csv'):
                 df = pd.read_csv(uploaded_file)
@@ -331,15 +331,23 @@ if st.session_state.df is not None:
         
         # --- أزرار التصدير (CSV و Excel) ---
         col_csv, col_excel = st.columns(2)
+        
         with col_csv:
             csv = df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
+            
         with col_excel:
             excel_buffer = io.BytesIO()
             with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Report')
             excel_data = excel_buffer.getvalue()
-            st.download_button(label=t["export_excel"], data=excel_data, file_name='report.xlsx', mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            
+            st.download_button(
+                label=t["export_excel"], 
+                data=excel_data, 
+                file_name='report.xlsx', 
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
 
         st.subheader(t["charts"])
         c1, c2 = st.columns(2)
