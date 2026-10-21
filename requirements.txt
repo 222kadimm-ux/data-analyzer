@@ -5,3 +5,5 @@ plotly
 psycopg2-binary
 bcrypt
 groq
+extra-streamlit-components
+resend
