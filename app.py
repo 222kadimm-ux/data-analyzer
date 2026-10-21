@@ -22,7 +22,6 @@ try:
 except Exception:
     groq_client = None
 
-# --- إعدادات EmailJS ---
 try:
     EMAILJS_SERVICE_ID = st.secrets["EMAILJS_SERVICE_ID"]
     EMAILJS_TEMPLATE_ID = st.secrets["EMAILJS_TEMPLATE_ID"]
@@ -39,25 +38,31 @@ def get_db_connection():
     return psycopg2.connect(DB_URL)
 
 def generate_token():
-    return ''.join(random.choices(string.ascii_letters + string.digits, k=32))
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=6)) # رمز من 6 أحرف
 
-def send_verification_email(to_email, token):
+def send_email_js(to_email, token, is_reset=False):
     if not email_service_active:
         return False
     try:
         url = "https://api.emailjs.com/api/v1.0/email/send"
+        
+        # إذا كان للاستعادة، نرسل كلمة "Reset" في الموضوع (يمكنك تعديل القالب لاحقاً)
+        subject = "استعادة كلمة المرور" if is_reset else "رمز التحقق"
+        
         payload = {
             "service_id": EMAILJS_SERVICE_ID,
             "template_id": EMAILJS_TEMPLATE_ID,
             "user_id": EMAILJS_PUBLIC_KEY,
             "template_params": {
                 "to_email": to_email,
-                "token": token
+                "token": token,
+                "subject": subject
             }
         }
         response = requests.post(url, json=payload)
+        print("EMAILJS RESPONSE:", response.text) # لمراقبة الأخطاء في Terminal
         return response.status_code == 200
-    except Exception:
+    except Exception as e:
         return False
 
 def create_user(email, password, security_answer):
@@ -69,7 +74,7 @@ def create_user(email, password, security_answer):
         cur.execute("INSERT INTO users (email, password_hash, security_answer, verify_token) VALUES (%s, %s, %s, %s)", (email, hashed, security_answer, token))
         conn.commit()
         
-        email_sent = send_verification_email(email, token)
+        email_sent = send_email_js(email, token, is_reset=False)
         if email_sent:
             st.success("✅ تم إنشاء الحساب! يرجى التحقق من بريدك الإلكتروني لتفعيل الحساب.")
         else:
@@ -106,6 +111,38 @@ def verify_token(token):
     cur.close()
     conn.close()
     return result is not None
+
+def request_password_reset(email):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    token = generate_token()
+    cur.execute("UPDATE users SET reset_token = %s WHERE email = %s RETURNING email", (token, email))
+    result = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    if result:
+        email_sent = send_email_js(email, token, is_reset=True)
+        return email_sent
+    return False
+
+def reset_password(email, token, new_password):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT reset_token FROM users WHERE email = %s", (email,))
+    result = cur.fetchone()
+    
+    if result and result[0] == token:
+        hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        cur.execute("UPDATE users SET password_hash = %s, reset_token = NULL WHERE email = %s", (hashed, email))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    cur.close()
+    conn.close()
+    return False
 
 def save_file_to_db(email, filename, df):
     conn = get_db_connection()
@@ -150,14 +187,16 @@ if 'user_email' not in st.session_state:
     st.session_state.user_email = None
 if 'df' not in st.session_state:
     st.session_state.df = None
-if 'show_reset' not in st.session_state:
-    st.session_state.show_reset = False
 if 'show_privacy' not in st.session_state:
     st.session_state.show_privacy = False
 if 'show_verify' not in st.session_state:
     st.session_state.show_verify = False
+if 'show_reset_request' not in st.session_state:
+    st.session_state.show_reset_request = False
+if 'show_reset_confirm' not in st.session_state:
+    st.session_state.show_reset_confirm = False
 
-# --- التحقق من رابط التفعيل في الرابط (URL) ---
+# --- التحقق من رابط التفعيل ---
 query_params = st.query_params
 if "verify" in query_params:
     token = query_params["verify"]
@@ -183,30 +222,41 @@ if not st.session_state.logged_in:
 if not st.session_state.logged_in:
     st.title("🔐 مرحباً بك في منصة تحليل البيانات")
     
-    if st.session_state.show_reset:
+    # 1. شاشة طلب استعادة كلمة المرور
+    if st.session_state.show_reset_request:
         st.subheader("🔑 استعادة كلمة المرور")
+        st.write("أدخل بريدك الإلكتروني وسنرسل لك رمزاً.")
         reset_email = st.text_input("البريد الإلكتروني")
-        reset_answer = st.text_input("إجابة سؤال الأمان")
-        new_pass = st.text_input("كلمة المرور الجديدة", type="password")
-        if st.button("تغيير كلمة المرور"):
-            conn = get_db_connection()
-            cur = conn.cursor()
-            cur.execute("SELECT security_answer FROM users WHERE email = %s", (reset_email,))
-            result = cur.fetchone()
-            if result and result[0] == reset_answer:
-                hashed = bcrypt.hashpw(new_pass.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                cur.execute("UPDATE users SET password_hash = %s WHERE email = %s", (hashed, reset_email))
-                conn.commit()
-                st.success("تم التغيير بنجاح!")
-                st.session_state.show_reset = False
+        if st.button("إرسال الرمز"):
+            if request_password_reset(reset_email):
+                st.success("✅ تم إرسال الرمز إلى بريدك الإلكتروني.")
+                st.session_state.show_reset_request = False
+                st.session_state.show_reset_confirm = True
+                st.session_state.reset_email_temp = reset_email # لحفظ البريد مؤقتاً
                 st.rerun()
             else:
-                st.error("بيانات خاطئة.")
-            cur.close()
-            conn.close()
+                st.error("❌ البريد الإلكتروني غير مسجل أو تعذر الإرسال.")
         if st.button("العودة"):
-            st.session_state.show_reset = False
+            st.session_state.show_reset_request = False
             st.rerun()
+
+    # 2. شاشة إدخال الرمز وكلمة المرور الجديدة
+    elif st.session_state.show_reset_confirm:
+        st.subheader("🔑 تغيير كلمة المرور")
+        st.write(f"تم إرسال الرمز إلى: {st.session_state.get('reset_email_temp', '')}")
+        token_input = st.text_input("رمز الاستعادة")
+        new_pass = st.text_input("كلمة المرور الجديدة", type="password")
+        if st.button("تغيير كلمة المرور"):
+            if reset_password(st.session_state.get('reset_email_temp'), token_input, new_pass):
+                st.success("✅ تم تغيير كلمة المرور بنجاح! يمكنك تسجيل الدخول.")
+                st.session_state.show_reset_confirm = False
+                st.rerun()
+            else:
+                st.error("❌ الرمز غير صحيح.")
+        if st.button("العودة"):
+            st.session_state.show_reset_confirm = False
+            st.rerun()
+
     elif st.session_state.show_privacy:
         st.subheader("📜 سياسة الخصوصية وشروط الاستخدام")
         st.write("""
@@ -219,6 +269,7 @@ if not st.session_state.logged_in:
         if st.button("العودة"):
             st.session_state.show_privacy = False
             st.rerun()
+
     elif st.session_state.show_verify:
         st.subheader("📧 تفعيل الحساب")
         st.write("أدخل الرمز الذي أرسلناه إلى بريدك الإلكتروني:")
@@ -259,7 +310,7 @@ if not st.session_state.logged_in:
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("نسيت كلمة المرور؟"):
-                    st.session_state.show_reset = True
+                    st.session_state.show_reset_request = True
                     st.rerun()
             with col2:
                 if st.button("سياسة الخصوصية"):
@@ -282,10 +333,8 @@ if not st.session_state.logged_in:
                     st.error("هذا البريد الإلكتروني مسجل مسبقاً.")
     st.stop()
 
-# --- التطبيق بعد تسجيل الدخول ---
+# --- التطبيق بعد تسجيل الدخول (بقية الكود كما هو) ---
 st.sidebar.write(f"👤 {st.session_state.user_email}")
-
-# الترجمة
 lang = st.sidebar.radio("Language / اللغة", ["العربية", "English"])
 t = {
     "العربية": {
@@ -322,7 +371,6 @@ t = {
     }
 }[lang]
 
-# --- زر البيانات التجريبية ---
 if st.sidebar.button(t["demo"]):
     demo_data = {
         'Product': ['Shirt', 'Pants', 'Shoes', 'Jacket', 'Shirt', 'Shoes'],
@@ -332,7 +380,6 @@ if st.sidebar.button(t["demo"]):
     st.session_state.df = pd.DataFrame(demo_data)
     st.rerun()
 
-# --- القائمة الجانبية: سجل الملفات ---
 st.sidebar.divider()
 st.sidebar.subheader(t["history"])
 user_files = get_user_files(st.session_state.user_email)
@@ -355,7 +402,6 @@ if user_files:
 else:
     st.sidebar.info("لا توجد ملفات سابقة.")
 
-# --- GDPR Export ---
 if st.sidebar.button(t["gdpr"]):
     all_data = {"files": [{"name": f[1], "data": f[2]} for f in user_files]}
     st.sidebar.download_button(
@@ -375,7 +421,6 @@ if st.sidebar.button("تسجيل الخروج"):
     st.session_state.df = None
     st.rerun()
 
-# --- الواجهة الرئيسية ---
 st.title(t["title"])
 uploaded_file = st.file_uploader(t["upload"], type=["xlsx", "csv"])
 
@@ -399,10 +444,8 @@ if st.session_state.df is not None:
     df = st.session_state.df
     st.divider()
     
-    # --- ميزة البحث والتصفية ---
     st.subheader(t["search"])
     search_query = st.text_input("ابحث عن منتج أو قيمة معينة (اتركه فارغاً لعرض الكل):")
-    
     if search_query:
         mask = df.astype(str).apply(lambda x: x.str.contains(search_query, case=False)).any(axis=1)
         df = df[mask]
@@ -422,28 +465,24 @@ if st.session_state.df is not None:
         c1, c2, c3 = st.columns(3)
         with c1: st.metric("Total", len(df))
         with c2: st.metric(f"Sum ({numeric_cols[0]})", f"{df[numeric_cols[0]].sum():,.0f}")
-        
         best_item = df.groupby(categorical_cols[0])[numeric_cols[0]].sum().idxmax()
         best_value = df.groupby(categorical_cols[0])[numeric_cols[0]].sum().max()
         with c3: st.metric(f"Top ({categorical_cols[0]})", best_item)
 
         st.divider()
         st.subheader(t["insights"])
-        insights = []
-        insights.append(f"المنتج الأكثر ربحاً هو '{best_item}' بقيمة إجمالية {best_value:,.0f}. يجب التركيز على توفيره.")
-        avg_value = df[numeric_cols[0]].mean()
-        insights.append(f"متوسط قيمة العمليات هو {avg_value:,.2f}. إذا كانت التكلفة أعلى من هذا، فأنت تخسر.")
+        insights = [
+            f"المنتج الأكثر ربحاً هو '{best_item}' بقيمة إجمالية {best_value:,.0f}. يجب التركيز على توفيره.",
+            f"متوسط قيمة العمليات هو {df[numeric_cols[0]].mean():,.2f}. إذا كانت التكلفة أعلى من هذا، فأنت تخسر."
+        ]
         if len(df) > 10:
             insights.append("حجم البيانات جيد جداً، يمكنك الآن الاعتماد على هذه الأرقام لاتخاذ قراراتك القادمة.")
         else:
             insights.append("حجم البيانات صغير، قد لا تعكس النتائج الواقع بدقة. حاول جمع المزيد من البيانات.")
-
         for insight in insights:
             st.info(insight)
 
         st.divider()
-        
-        # --- أزرار التصدير (CSV و Excel) ---
         col_csv, col_excel = st.columns(2)
         with col_csv:
             csv = df.to_csv(index=False).encode('utf-8-sig')
@@ -459,9 +498,7 @@ if st.session_state.df is not None:
         c1, c2 = st.columns(2)
         with c1: col_x = st.selectbox("Category", categorical_cols)
         with c2: col_y = st.selectbox("Value", numeric_cols)
-
         chart_data = df.groupby(col_x)[col_y].sum().reset_index().sort_values(by=col_y, ascending=False)
-
         c1, c2 = st.columns(2)
         with c1:
             fig_bar = px.bar(chart_data, x=col_x, y=col_y, color=col_y, color_continuous_scale='Teal')
@@ -472,33 +509,19 @@ if st.session_state.df is not None:
             fig_pie.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='white')
             st.plotly_chart(fig_pie, use_container_width=True)
 
-        # --- المحادثة مع البيانات (Chat with Data) ---
         st.divider()
         st.subheader(t["chat"])
-        st.write("اسأل عن بياناتك (مثال: ما هو أفضل منتج؟ كم إجمالي المبيعات؟)")
-        
         user_question = st.text_input("اكتب سؤالك هنا...")
-        
         if user_question:
             if groq_client:
                 with st.spinner("الذكاء الاصطناعي يفكر..."):
                     sample_data = df.head(10).to_json(orient='records')
-                    prompt = f"""
-                    أنت محلل بيانات. لدي بيانات مبيعات (عينة من 10 صفوف):
-                    {sample_data}
-                    
-                    المستخدم يسأل: "{user_question}"
-                    
-                    أجب على السؤال باللغة العربية بناءً على البيانات. إذا لم تكن الإجابة موجودة، قل ذلك.
-                    """
+                    prompt = f"أنت محلل بيانات. لدي بيانات مبيعات (عينة من 10 صفوف):\n{sample_data}\n\nالمستخدم يسأل: \"{user_question}\"\n\nأجب على السؤال باللغة العربية بناءً على البيانات. إذا لم تكن الإجابة موجودة، قل ذلك."
                     try:
                         models = groq_client.models.list()
                         available_model = models.data[0].id
                         chat_completion = groq_client.chat.completions.create(
-                            messages=[
-                                {"role": "system", "content": "أنت محلل بيانات ذكي."},
-                                {"role": "user", "content": prompt}
-                            ],
+                            messages=[{"role": "system", "content": "أنت محلل بيانات ذكي."}, {"role": "user", "content": prompt}],
                             model=available_model,
                         )
                         st.success(chat_completion.choices[0].message.content)
