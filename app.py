@@ -5,6 +5,7 @@ import psycopg2
 import bcrypt
 import json
 import io
+import time
 from groq import Groq
 import extra_streamlit_components as stx
 from tenacity import retry, stop_after_attempt, wait_fixed
@@ -32,7 +33,7 @@ except Exception:
 # --- إدارة الكوكيز ---
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
-# --- دوال قاعدة البيانات (مع ميزة Retry) ---
+# --- دوال قاعدة البيانات (مع Retry) ---
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 def get_db_connection():
     return psycopg2.connect(DB_URL)
@@ -108,6 +109,12 @@ if 'df' not in st.session_state:
 if 'show_privacy' not in st.session_state:
     st.session_state.show_privacy = False
 
+# --- ميزة Rate Limiting (حظر المحاولات) ---
+if 'login_attempts' not in st.session_state:
+    st.session_state.login_attempts = 0
+if 'last_attempt_time' not in st.session_state:
+    st.session_state.last_attempt_time = 0
+
 # --- استرجاع الجلسة من الكوكيز ---
 if not st.session_state.logged_in:
     saved_session = cookie_manager.get(cookie="app_session")
@@ -132,7 +139,16 @@ if not st.session_state.logged_in:
             st.rerun()
     else:
         tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
+        
         with tab1:
+            # التحقق من الحظر
+            if st.session_state.login_attempts >= 5:
+                if time.time() - st.session_state.last_attempt_time < 60:
+                    st.error("🚫 تم حظرك مؤقتاً بسبب محاولات دخول خاطئة. يرجى الانتظار دقيقة.")
+                    st.stop()
+                else:
+                    st.session_state.login_attempts = 0 # إعادة تعيين العداد بعد دقيقة
+            
             login_email = st.text_input("البريد الإلكتروني", key="login_email")
             login_pass = st.text_input("كلمة المرور", type="password", key="login_pass")
             remember_me = st.checkbox("تذكرني (حفظ الجلسة)")
@@ -141,12 +157,15 @@ if not st.session_state.logged_in:
                 if verify_user(login_email, login_pass):
                     st.session_state.logged_in = True
                     st.session_state.user_email = login_email
+                    st.session_state.login_attempts = 0 # تصفير العداد عند النجاح
                     if remember_me:
                         session_data = json.dumps({"email": login_email})
                         cookie_manager.set("app_session", session_data)
                     st.rerun()
                 else:
-                    st.error("البريد الإلكتروني أو كلمة المرور غير صحيحة.")
+                    st.session_state.login_attempts += 1
+                    st.session_state.last_attempt_time = time.time()
+                    st.error(f"البريد الإلكتروني أو كلمة المرور غير صحيحة. (المحاولة {st.session_state.login_attempts}/5)")
             
             if st.button("سياسة الخصوصية"):
                 st.session_state.show_privacy = True
@@ -156,11 +175,17 @@ if not st.session_state.logged_in:
             new_email = st.text_input("البريد الإلكتروني الجديد", key="new_email")
             new_pass = st.text_input("كلمة المرور الجديدة", type="password", key="new_pass")
             security_q = st.text_input("سؤال الأمان (مثلاً: اسم مدينتك المفضلة؟)", key="security_q")
+            
+            # ميزة CAPTCHA (سؤال رياضي بسيط)
+            captcha_answer = st.number_input("أثبت أنك إنسان: ما هو ناتج 3 + 7 ؟", min_value=0, step=1)
+            
             if st.button("إنشاء الحساب"):
                 if len(new_pass) < 6:
                     st.warning("كلمة المرور يجب أن تكون 6 أحرف على الأقل.")
                 elif not security_q:
                     st.warning("الرجاء إدخال إجابة سؤال الأمان.")
+                elif captcha_answer != 10:
+                    st.error("❌ إجابة التحقق (CAPTCHA) خاطئة. حاول مرة أخرى.")
                 elif create_user(new_email, new_pass, security_q):
                     st.success("✅ تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول.")
                 else:
@@ -265,7 +290,7 @@ st.title(t["title"])
 uploaded_file = st.file_uploader(t["upload"], type=["xlsx", "csv"])
 
 if uploaded_file is not None:
-    with st.spinner("جارٍ تحليل الملف..."):
+    with st.spinner("جارٍ تحليل الملف..."): # Spinner
         try:
             if uploaded_file.name.endswith('.csv'):
                 df = pd.read_csv(uploaded_file)
