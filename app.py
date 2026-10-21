@@ -5,8 +5,6 @@ import psycopg2
 import bcrypt
 import json
 import io
-import random
-import string
 import requests
 from groq import Groq
 import extra_streamlit_components as stx
@@ -16,19 +14,11 @@ DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pool
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
-# --- إعدادات الذكاء الاصطناعي والبريد ---
+# --- إعدادات الذكاء الاصطناعي ---
 try:
     groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 except Exception:
     groq_client = None
-
-try:
-    EMAILJS_SERVICE_ID = st.secrets["EMAILJS_SERVICE_ID"]
-    EMAILJS_TEMPLATE_ID = st.secrets["EMAILJS_TEMPLATE_ID"]
-    EMAILJS_PUBLIC_KEY = st.secrets["EMAILJS_PUBLIC_KEY"]
-    email_service_active = True
-except Exception:
-    email_service_active = False
 
 # --- إدارة الكوكيز ---
 cookie_manager = stx.CookieManager(key="cookie_manager")
@@ -37,50 +27,14 @@ cookie_manager = stx.CookieManager(key="cookie_manager")
 def get_db_connection():
     return psycopg2.connect(DB_URL)
 
-def generate_token():
-    return ''.join(random.choices(string.ascii_letters + string.digits, k=6)) # رمز من 6 أحرف
-
-def send_email_js(to_email, token, is_reset=False):
-    if not email_service_active:
-        return False
-    try:
-        url = "https://api.emailjs.com/api/v1.0/email/send"
-        
-        # إذا كان للاستعادة، نرسل كلمة "Reset" في الموضوع (يمكنك تعديل القالب لاحقاً)
-        subject = "استعادة كلمة المرور" if is_reset else "رمز التحقق"
-        
-        payload = {
-            "service_id": EMAILJS_SERVICE_ID,
-            "template_id": EMAILJS_TEMPLATE_ID,
-            "user_id": EMAILJS_PUBLIC_KEY,
-            "template_params": {
-                "to_email": to_email,
-                "token": token,
-                "subject": subject
-            }
-        }
-        response = requests.post(url, json=payload)
-        print("EMAILJS RESPONSE:", response.text) # لمراقبة الأخطاء في Terminal
-        return response.status_code == 200
-    except Exception as e:
-        return False
-
 def create_user(email, password, security_answer):
     conn = get_db_connection()
     cur = conn.cursor()
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-    token = generate_token()
     try:
-        cur.execute("INSERT INTO users (email, password_hash, security_answer, verify_token) VALUES (%s, %s, %s, %s)", (email, hashed, security_answer, token))
+        # تم التعديل هنا: نضع email_verified = TRUE فوراً
+        cur.execute("INSERT INTO users (email, password_hash, security_answer, email_verified) VALUES (%s, %s, %s, TRUE)", (email, hashed, security_answer))
         conn.commit()
-        
-        email_sent = send_email_js(email, token, is_reset=False)
-        if email_sent:
-            st.success("✅ تم إنشاء الحساب! يرجى التحقق من بريدك الإلكتروني لتفعيل الحساب.")
-        else:
-            st.warning("⚠️ تم إنشاء الحساب، لكن تعذر إرسال البريد. تواصل مع الدعم.")
-            cur.execute("UPDATE users SET email_verified = TRUE WHERE email = %s", (email,))
-            conn.commit()
         return True
     except psycopg2.errors.UniqueViolation:
         return False
@@ -91,57 +45,12 @@ def create_user(email, password, security_answer):
 def verify_user(email, password):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT password_hash, email_verified FROM users WHERE email = %s", (email,))
+    cur.execute("SELECT password_hash FROM users WHERE email = %s", (email,))
     result = cur.fetchone()
     cur.close()
     conn.close()
-    if result:
-        if not result[1]:
-            return "unverified"
-        if bcrypt.checkpw(password.encode('utf-8'), result[0].encode('utf-8')):
-            return True
-    return False
-
-def verify_token(token):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET email_verified = TRUE, verify_token = NULL WHERE verify_token = %s RETURNING email", (token,))
-    result = cur.fetchone()
-    conn.commit()
-    cur.close()
-    conn.close()
-    return result is not None
-
-def request_password_reset(email):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    token = generate_token()
-    cur.execute("UPDATE users SET reset_token = %s WHERE email = %s RETURNING email", (token, email))
-    result = cur.fetchone()
-    conn.commit()
-    cur.close()
-    conn.close()
-    
-    if result:
-        email_sent = send_email_js(email, token, is_reset=True)
-        return email_sent
-    return False
-
-def reset_password(email, token, new_password):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT reset_token FROM users WHERE email = %s", (email,))
-    result = cur.fetchone()
-    
-    if result and result[0] == token:
-        hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-        cur.execute("UPDATE users SET password_hash = %s, reset_token = NULL WHERE email = %s", (hashed, email))
-        conn.commit()
-        cur.close()
-        conn.close()
+    if result and bcrypt.checkpw(password.encode('utf-8'), result[0].encode('utf-8')):
         return True
-    cur.close()
-    conn.close()
     return False
 
 def save_file_to_db(email, filename, df):
@@ -189,22 +98,6 @@ if 'df' not in st.session_state:
     st.session_state.df = None
 if 'show_privacy' not in st.session_state:
     st.session_state.show_privacy = False
-if 'show_verify' not in st.session_state:
-    st.session_state.show_verify = False
-if 'show_reset_request' not in st.session_state:
-    st.session_state.show_reset_request = False
-if 'show_reset_confirm' not in st.session_state:
-    st.session_state.show_reset_confirm = False
-
-# --- التحقق من رابط التفعيل ---
-query_params = st.query_params
-if "verify" in query_params:
-    token = query_params["verify"]
-    if verify_token(token):
-        st.success("✅ تم تفعيل حسابك بنجاح! يمكنك الآن تسجيل الدخول.")
-    else:
-        st.error("❌ رابط التفعيل غير صالح أو مستخدم مسبقاً.")
-    st.stop()
 
 # --- استرجاع الجلسة ---
 if not st.session_state.logged_in:
@@ -222,119 +115,52 @@ if not st.session_state.logged_in:
 if not st.session_state.logged_in:
     st.title("🔐 مرحباً بك في منصة تحليل البيانات")
     
-    # 1. شاشة طلب استعادة كلمة المرور
-    if st.session_state.show_reset_request:
-        st.subheader("🔑 استعادة كلمة المرور")
-        st.write("أدخل بريدك الإلكتروني وسنرسل لك رمزاً.")
-        reset_email = st.text_input("البريد الإلكتروني")
-        if st.button("إرسال الرمز"):
-            if request_password_reset(reset_email):
-                st.success("✅ تم إرسال الرمز إلى بريدك الإلكتروني.")
-                st.session_state.show_reset_request = False
-                st.session_state.show_reset_confirm = True
-                st.session_state.reset_email_temp = reset_email # لحفظ البريد مؤقتاً
-                st.rerun()
-            else:
-                st.error("❌ البريد الإلكتروني غير مسجل أو تعذر الإرسال.")
-        if st.button("العودة"):
-            st.session_state.show_reset_request = False
-            st.rerun()
-
-    # 2. شاشة إدخال الرمز وكلمة المرور الجديدة
-    elif st.session_state.show_reset_confirm:
-        st.subheader("🔑 تغيير كلمة المرور")
-        st.write(f"تم إرسال الرمز إلى: {st.session_state.get('reset_email_temp', '')}")
-        token_input = st.text_input("رمز الاستعادة")
-        new_pass = st.text_input("كلمة المرور الجديدة", type="password")
-        if st.button("تغيير كلمة المرور"):
-            if reset_password(st.session_state.get('reset_email_temp'), token_input, new_pass):
-                st.success("✅ تم تغيير كلمة المرور بنجاح! يمكنك تسجيل الدخول.")
-                st.session_state.show_reset_confirm = False
-                st.rerun()
-            else:
-                st.error("❌ الرمز غير صحيح.")
-        if st.button("العودة"):
-            st.session_state.show_reset_confirm = False
-            st.rerun()
-
-    elif st.session_state.show_privacy:
-        st.subheader("📜 سياسة الخصوصية وشروط الاستخدام")
-        st.write("""
-        **سياسة الخصوصية:**
-        نحن نحترم خصوصيتك. جميع البيانات التي ترفعها يتم تشفيرها وتخزينها في قاعدة بيانات آمنة. لا نشارك بياناتك مع أي طرف ثالث. يمكنك حذف بياناتك في أي وقت من خلال لوحة التحكم.
-        
-        **شروط الاستخدام:**
-        هذا التطبيق مخصص لتحليل البيانات. يمنع استخدامه لأي أغراض غير قانونية. نحن غير مسؤولين عن أي قرارات تتخذها بناءً على تحليلات المنصة.
-        """)
+    if st.session_state.show_privacy:
+        st.subheader("📜 سياسة الخصوصية")
+        st.write("نحن نحترم خصوصيتك...")
         if st.button("العودة"):
             st.session_state.show_privacy = False
-            st.rerun()
-
-    elif st.session_state.show_verify:
-        st.subheader("📧 تفعيل الحساب")
-        st.write("أدخل الرمز الذي أرسلناه إلى بريدك الإلكتروني:")
-        token_input = st.text_input("رمز التحقق")
-        if st.button("تفعيل"):
-            if verify_token(token_input):
-                st.success("✅ تم التفعيل! يمكنك الآن تسجيل الدخول.")
-                st.session_state.show_verify = False
-                st.rerun()
-            else:
-                st.error("رمز غير صحيح.")
-        if st.button("العودة"):
-            st.session_state.show_verify = False
             st.rerun()
     else:
         tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
         with tab1:
             login_email = st.text_input("البريد الإلكتروني", key="login_email")
             login_pass = st.text_input("كلمة المرور", type="password", key="login_pass")
-            remember_me = st.checkbox("تذكرني (حفظ الجلسة)")
+            remember_me = st.checkbox("تذكرني")
             
             if st.button("دخول", type="primary"):
-                status = verify_user(login_email, login_pass)
-                if status is True:
+                if verify_user(login_email, login_pass):
                     st.session_state.logged_in = True
                     st.session_state.user_email = login_email
                     if remember_me:
                         session_data = json.dumps({"email": login_email})
                         cookie_manager.set("app_session", session_data)
                     st.rerun()
-                elif status == "unverified":
-                    st.error("⚠️ يرجى تفعيل بريدك الإلكتروني أولاً.")
-                    st.session_state.show_verify = True
-                    st.rerun()
                 else:
                     st.error("البريد الإلكتروني أو كلمة المرور غير صحيحة.")
             
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("نسيت كلمة المرور؟"):
-                    st.session_state.show_reset_request = True
-                    st.rerun()
-            with col2:
-                if st.button("سياسة الخصوصية"):
-                    st.session_state.show_privacy = True
-                    st.rerun()
+            if st.button("سياسة الخصوصية"):
+                st.session_state.show_privacy = True
+                st.rerun()
                     
         with tab2:
             new_email = st.text_input("البريد الإلكتروني الجديد", key="new_email")
             new_pass = st.text_input("كلمة المرور الجديدة", type="password", key="new_pass")
-            security_q = st.text_input("سؤال الأمان (مثلاً: اسم مدينتك المفضلة؟)", key="security_q")
+            security_q = st.text_input("سؤال الأمان", key="security_q")
             if st.button("إنشاء الحساب"):
                 if len(new_pass) < 6:
                     st.warning("كلمة المرور يجب أن تكون 6 أحرف على الأقل.")
                 elif not security_q:
                     st.warning("الرجاء إدخال إجابة سؤال الأمان.")
                 elif create_user(new_email, new_pass, security_q):
-                    st.session_state.show_verify = True
-                    st.rerun()
+                    st.success("✅ تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول.")
                 else:
                     st.error("هذا البريد الإلكتروني مسجل مسبقاً.")
     st.stop()
 
-# --- التطبيق بعد تسجيل الدخول (بقية الكود كما هو) ---
+# --- التطبيق بعد تسجيل الدخول ---
 st.sidebar.write(f"👤 {st.session_state.user_email}")
+
 lang = st.sidebar.radio("Language / اللغة", ["العربية", "English"])
 t = {
     "العربية": {
