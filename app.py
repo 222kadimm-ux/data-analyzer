@@ -7,26 +7,29 @@ import json
 import io
 import random
 import string
-import resend
 from groq import Groq
 import extra_streamlit_components as stx
+
+# --- محاولة استيراد Resend (إذا كانت مثبتة) ---
+try:
+    import resend
+    resend.api_key = st.secrets.get("RESEND_API_KEY", "")
+    email_service_active = True
+except ImportError:
+    resend = None
+    email_service_active = False
+    st.warning("⚠️ مكتبة Resend غير مثبتة. ميزة إرسال البريد معطلة.")
 
 # --- إعدادات قاعدة البيانات ---
 DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
-# --- إعدادات الذكاء الاصطناعي والبريد ---
+# --- إعدادات الذكاء الاصطناعي (Groq) ---
 try:
     groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-except:
+except Exception:
     groq_client = None
-
-try:
-    resend.api_key = st.secrets["RESEND_API_KEY"]
-    email_service_active = True
-except:
-    email_service_active = False
 
 # --- إدارة الكوكيز ---
 cookie_manager = stx.CookieManager(key="cookie_manager")
@@ -42,11 +45,9 @@ def send_verification_email(to_email, token):
     if not email_service_active:
         return False
     try:
-        # رابط التحقق (يمكنك تغييره إذا كنت تستخدم رابطاً آخر)
         verify_link = f"https://data-analyzer-vzl8jspasawmzxey7gezcm.streamlit.app/?verify={token}"
-        
         resend.Emails.send({
-            "from": "onboarding@resend.dev", # استخدم هذا البريد للتجربة المجانية
+            "from": "onboarding@resend.dev",
             "to": to_email,
             "subject": "تحقق من بريدك الإلكتروني - Pro Data Analyzer",
             "html": f"""
@@ -61,7 +62,6 @@ def send_verification_email(to_email, token):
         })
         return True
     except Exception as e:
-        st.error(f"فشل إرسال البريد: {e}")
         return False
 
 def create_user(email, password, security_answer):
@@ -73,17 +73,13 @@ def create_user(email, password, security_answer):
         cur.execute("INSERT INTO users (email, password_hash, security_answer, verify_token) VALUES (%s, %s, %s, %s)", (email, hashed, security_answer, token))
         conn.commit()
         
-        # إرسال البريد
         email_sent = send_verification_email(email, token)
-        
         if email_sent:
             st.success("✅ تم إنشاء الحساب! يرجى التحقق من بريدك الإلكتروني لتفعيل الحساب.")
         else:
             st.warning("⚠️ تم إنشاء الحساب، لكن تعذر إرسال البريد. تواصل مع الدعم.")
-            # في حال فشل البريد، نعتبر الحساب مفعلاً (للتجربة فقط)
             cur.execute("UPDATE users SET email_verified = TRUE WHERE email = %s", (email,))
             conn.commit()
-            
         return True
     except psycopg2.errors.UniqueViolation:
         return False
@@ -115,6 +111,42 @@ def verify_token(token):
     conn.close()
     return result is not None
 
+def save_file_to_db(email, filename, df):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    json_data = df.to_json(orient='records')
+    try:
+        cur.execute("INSERT INTO user_files (user_email, file_name, file_data) VALUES (%s, %s, %s)", (email, filename, json_data))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
+def get_user_files(email):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, file_name, file_data, created_at FROM user_files WHERE user_email = %s ORDER BY created_at DESC", (email,))
+    files = cur.fetchall()
+    cur.close()
+    conn.close()
+    return files
+
+def delete_user_file(file_id, user_email):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM user_files WHERE id = %s AND user_email = %s", (file_id, user_email))
+        conn.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
 # --- إدارة الجلسة ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -129,7 +161,7 @@ if 'show_privacy' not in st.session_state:
 if 'show_verify' not in st.session_state:
     st.session_state.show_verify = False
 
-# --- التحقق من رابط التفعيل في الرابط (URL) ---
+# --- التحقق من رابط التفعيل ---
 query_params = st.query_params
 if "verify" in query_params:
     token = query_params["verify"]
