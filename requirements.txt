@@ -7,3 +7,4 @@ bcrypt
 groq
 extra-streamlit-components
 resend
+tenacity

@@ -5,16 +5,25 @@ import psycopg2
 import bcrypt
 import json
 import io
-import requests
 from groq import Groq
 import extra_streamlit_components as stx
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 # --- إعدادات قاعدة البيانات ---
 DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
-# --- إعدادات الذكاء الاصطناعي ---
+# --- تصميم مخصص ---
+st.markdown("""
+    <style>
+    .stApp { background-color: #0e1117; }
+    div[data-testid="stMetric"] { background-color: #1e2130; padding: 15px; border-radius: 10px; border: 1px solid #3e4257; }
+    .stButton > button { border-radius: 8px; font-weight: bold; }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- إعدادات الذكاء الاصطناعي (Groq) ---
 try:
     groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 except Exception:
@@ -23,7 +32,8 @@ except Exception:
 # --- إدارة الكوكيز ---
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
-# --- دوال قاعدة البيانات ---
+# --- دوال قاعدة البيانات (مع ميزة Retry) ---
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 def get_db_connection():
     return psycopg2.connect(DB_URL)
 
@@ -32,7 +42,6 @@ def create_user(email, password, security_answer):
     cur = conn.cursor()
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     try:
-        # تم التعديل هنا: نضع email_verified = TRUE فوراً
         cur.execute("INSERT INTO users (email, password_hash, security_answer, email_verified) VALUES (%s, %s, %s, TRUE)", (email, hashed, security_answer))
         conn.commit()
         return True
@@ -99,7 +108,7 @@ if 'df' not in st.session_state:
 if 'show_privacy' not in st.session_state:
     st.session_state.show_privacy = False
 
-# --- استرجاع الجلسة ---
+# --- استرجاع الجلسة من الكوكيز ---
 if not st.session_state.logged_in:
     saved_session = cookie_manager.get(cookie="app_session")
     if saved_session:
@@ -126,7 +135,7 @@ if not st.session_state.logged_in:
         with tab1:
             login_email = st.text_input("البريد الإلكتروني", key="login_email")
             login_pass = st.text_input("كلمة المرور", type="password", key="login_pass")
-            remember_me = st.checkbox("تذكرني")
+            remember_me = st.checkbox("تذكرني (حفظ الجلسة)")
             
             if st.button("دخول", type="primary"):
                 if verify_user(login_email, login_pass):
@@ -146,7 +155,7 @@ if not st.session_state.logged_in:
         with tab2:
             new_email = st.text_input("البريد الإلكتروني الجديد", key="new_email")
             new_pass = st.text_input("كلمة المرور الجديدة", type="password", key="new_pass")
-            security_q = st.text_input("سؤال الأمان", key="security_q")
+            security_q = st.text_input("سؤال الأمان (مثلاً: اسم مدينتك المفضلة؟)", key="security_q")
             if st.button("إنشاء الحساب"):
                 if len(new_pass) < 6:
                     st.warning("كلمة المرور يجب أن تكون 6 أحرف على الأقل.")
@@ -161,6 +170,7 @@ if not st.session_state.logged_in:
 # --- التطبيق بعد تسجيل الدخول ---
 st.sidebar.write(f"👤 {st.session_state.user_email}")
 
+# الترجمة
 lang = st.sidebar.radio("Language / اللغة", ["العربية", "English"])
 t = {
     "العربية": {
@@ -197,6 +207,7 @@ t = {
     }
 }[lang]
 
+# --- زر البيانات التجريبية ---
 if st.sidebar.button(t["demo"]):
     demo_data = {
         'Product': ['Shirt', 'Pants', 'Shoes', 'Jacket', 'Shirt', 'Shoes'],
@@ -206,6 +217,7 @@ if st.sidebar.button(t["demo"]):
     st.session_state.df = pd.DataFrame(demo_data)
     st.rerun()
 
+# --- القائمة الجانبية: سجل الملفات ---
 st.sidebar.divider()
 st.sidebar.subheader(t["history"])
 user_files = get_user_files(st.session_state.user_email)
@@ -228,6 +240,7 @@ if user_files:
 else:
     st.sidebar.info("لا توجد ملفات سابقة.")
 
+# --- GDPR Export ---
 if st.sidebar.button(t["gdpr"]):
     all_data = {"files": [{"name": f[1], "data": f[2]} for f in user_files]}
     st.sidebar.download_button(
@@ -247,31 +260,35 @@ if st.sidebar.button("تسجيل الخروج"):
     st.session_state.df = None
     st.rerun()
 
+# --- الواجهة الرئيسية ---
 st.title(t["title"])
 uploaded_file = st.file_uploader(t["upload"], type=["xlsx", "csv"])
 
 if uploaded_file is not None:
-    try:
-        if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file)
-        else:
-            df = pd.read_excel(uploaded_file)
-        
-        df = df.dropna()
-        df = df.drop_duplicates()
-        
-        if save_file_to_db(st.session_state.user_email, uploaded_file.name, df):
-            st.session_state.df = df
-            st.success(f"✅ {uploaded_file.name}")
-    except Exception as e:
-        st.error(f"Error: {e}")
+    with st.spinner("جارٍ تحليل الملف..."): # ميزة Spinner
+        try:
+            if uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
+            
+            df = df.dropna()
+            df = df.drop_duplicates()
+            
+            if save_file_to_db(st.session_state.user_email, uploaded_file.name, df):
+                st.session_state.df = df
+                st.success(f"✅ {uploaded_file.name}")
+        except Exception as e:
+            st.error(f"Error: {e}")
 
 if st.session_state.df is not None:
     df = st.session_state.df
     st.divider()
     
+    # --- ميزة البحث والتصفية ---
     st.subheader(t["search"])
     search_query = st.text_input("ابحث عن منتج أو قيمة معينة (اتركه فارغاً لعرض الكل):")
+    
     if search_query:
         mask = df.astype(str).apply(lambda x: x.str.contains(search_query, case=False)).any(axis=1)
         df = df[mask]
@@ -291,24 +308,28 @@ if st.session_state.df is not None:
         c1, c2, c3 = st.columns(3)
         with c1: st.metric("Total", len(df))
         with c2: st.metric(f"Sum ({numeric_cols[0]})", f"{df[numeric_cols[0]].sum():,.0f}")
+        
         best_item = df.groupby(categorical_cols[0])[numeric_cols[0]].sum().idxmax()
         best_value = df.groupby(categorical_cols[0])[numeric_cols[0]].sum().max()
         with c3: st.metric(f"Top ({categorical_cols[0]})", best_item)
 
         st.divider()
         st.subheader(t["insights"])
-        insights = [
-            f"المنتج الأكثر ربحاً هو '{best_item}' بقيمة إجمالية {best_value:,.0f}. يجب التركيز على توفيره.",
-            f"متوسط قيمة العمليات هو {df[numeric_cols[0]].mean():,.2f}. إذا كانت التكلفة أعلى من هذا، فأنت تخسر."
-        ]
+        insights = []
+        insights.append(f"المنتج الأكثر ربحاً هو '{best_item}' بقيمة إجمالية {best_value:,.0f}. يجب التركيز على توفيره.")
+        avg_value = df[numeric_cols[0]].mean()
+        insights.append(f"متوسط قيمة العمليات هو {avg_value:,.2f}. إذا كانت التكلفة أعلى من هذا، فأنت تخسر.")
         if len(df) > 10:
             insights.append("حجم البيانات جيد جداً، يمكنك الآن الاعتماد على هذه الأرقام لاتخاذ قراراتك القادمة.")
         else:
             insights.append("حجم البيانات صغير، قد لا تعكس النتائج الواقع بدقة. حاول جمع المزيد من البيانات.")
+
         for insight in insights:
             st.info(insight)
 
         st.divider()
+        
+        # --- أزرار التصدير (CSV و Excel) ---
         col_csv, col_excel = st.columns(2)
         with col_csv:
             csv = df.to_csv(index=False).encode('utf-8-sig')
@@ -324,7 +345,9 @@ if st.session_state.df is not None:
         c1, c2 = st.columns(2)
         with c1: col_x = st.selectbox("Category", categorical_cols)
         with c2: col_y = st.selectbox("Value", numeric_cols)
+
         chart_data = df.groupby(col_x)[col_y].sum().reset_index().sort_values(by=col_y, ascending=False)
+
         c1, c2 = st.columns(2)
         with c1:
             fig_bar = px.bar(chart_data, x=col_x, y=col_y, color=col_y, color_continuous_scale='Teal')
@@ -335,19 +358,33 @@ if st.session_state.df is not None:
             fig_pie.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='white')
             st.plotly_chart(fig_pie, use_container_width=True)
 
+        # --- المحادثة مع البيانات (Chat with Data) ---
         st.divider()
         st.subheader(t["chat"])
+        st.write("اسأل عن بياناتك (مثال: ما هو أفضل منتج؟ كم إجمالي المبيعات؟)")
+        
         user_question = st.text_input("اكتب سؤالك هنا...")
+        
         if user_question:
             if groq_client:
                 with st.spinner("الذكاء الاصطناعي يفكر..."):
                     sample_data = df.head(10).to_json(orient='records')
-                    prompt = f"أنت محلل بيانات. لدي بيانات مبيعات (عينة من 10 صفوف):\n{sample_data}\n\nالمستخدم يسأل: \"{user_question}\"\n\nأجب على السؤال باللغة العربية بناءً على البيانات. إذا لم تكن الإجابة موجودة، قل ذلك."
+                    prompt = f"""
+                    أنت محلل بيانات. لدي بيانات مبيعات (عينة من 10 صفوف):
+                    {sample_data}
+                    
+                    المستخدم يسأل: "{user_question}"
+                    
+                    أجب على السؤال باللغة العربية بناءً على البيانات. إذا لم تكن الإجابة موجودة، قل ذلك.
+                    """
                     try:
                         models = groq_client.models.list()
                         available_model = models.data[0].id
                         chat_completion = groq_client.chat.completions.create(
-                            messages=[{"role": "system", "content": "أنت محلل بيانات ذكي."}, {"role": "user", "content": prompt}],
+                            messages=[
+                                {"role": "system", "content": "أنت محلل بيانات ذكي."},
+                                {"role": "user", "content": prompt}
+                            ],
                             model=available_model,
                         )
                         st.success(chat_completion.choices[0].message.content)
