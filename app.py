@@ -5,6 +5,9 @@ import psycopg2
 import bcrypt
 import json
 import io
+import random
+import string
+import requests
 from groq import Groq
 import extra_streamlit_components as stx
 
@@ -13,48 +16,66 @@ DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pool
 
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
-# --- تصميم مخصص ---
-st.markdown("""
-    <style>
-    .stApp { background-color: #0e1117; }
-    div[data-testid="stMetric"] { background-color: #1e2130; padding: 15px; border-radius: 10px; border: 1px solid #3e4257; }
-    .stButton > button { border-radius: 8px; font-weight: bold; }
-    </style>
-""", unsafe_allow_html=True)
-
-# --- إعدادات الذكاء الاصطناعي (Groq) ---
+# --- إعدادات الذكاء الاصطناعي والبريد ---
 try:
     groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 except Exception:
     groq_client = None
 
-# --- إدارة الكوكيز (لحفظ الجلسة) ---
+# --- إعدادات EmailJS ---
+try:
+    EMAILJS_SERVICE_ID = st.secrets["EMAILJS_SERVICE_ID"]
+    EMAILJS_TEMPLATE_ID = st.secrets["EMAILJS_TEMPLATE_ID"]
+    EMAILJS_PUBLIC_KEY = st.secrets["EMAILJS_PUBLIC_KEY"]
+    email_service_active = True
+except Exception:
+    email_service_active = False
+
+# --- إدارة الكوكيز ---
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
 # --- دوال قاعدة البيانات ---
 def get_db_connection():
     return psycopg2.connect(DB_URL)
 
-def log_action(email, action):
-    conn = get_db_connection()
-    cur = conn.cursor()
+def generate_token():
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=32))
+
+def send_verification_email(to_email, token):
+    if not email_service_active:
+        return False
     try:
-        cur.execute("INSERT INTO audit_logs (user_email, action) VALUES (%s, %s)", (email, action))
-        conn.commit()
+        url = "https://api.emailjs.com/api/v1.0/email/send"
+        payload = {
+            "service_id": EMAILJS_SERVICE_ID,
+            "template_id": EMAILJS_TEMPLATE_ID,
+            "user_id": EMAILJS_PUBLIC_KEY,
+            "template_params": {
+                "to_email": to_email,
+                "token": token
+            }
+        }
+        response = requests.post(url, json=payload)
+        return response.status_code == 200
     except Exception:
-        pass
-    finally:
-        cur.close()
-        conn.close()
+        return False
 
 def create_user(email, password, security_answer):
     conn = get_db_connection()
     cur = conn.cursor()
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    token = generate_token()
     try:
-        cur.execute("INSERT INTO users (email, password_hash, security_answer) VALUES (%s, %s, %s)", (email, hashed, security_answer))
+        cur.execute("INSERT INTO users (email, password_hash, security_answer, verify_token) VALUES (%s, %s, %s, %s)", (email, hashed, security_answer, token))
         conn.commit()
-        log_action(email, "تسجيل حساب جديد")
+        
+        email_sent = send_verification_email(email, token)
+        if email_sent:
+            st.success("✅ تم إنشاء الحساب! يرجى التحقق من بريدك الإلكتروني لتفعيل الحساب.")
+        else:
+            st.warning("⚠️ تم إنشاء الحساب، لكن تعذر إرسال البريد. تواصل مع الدعم.")
+            cur.execute("UPDATE users SET email_verified = TRUE WHERE email = %s", (email,))
+            conn.commit()
         return True
     except psycopg2.errors.UniqueViolation:
         return False
@@ -65,14 +86,26 @@ def create_user(email, password, security_answer):
 def verify_user(email, password):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT password_hash FROM users WHERE email = %s", (email,))
+    cur.execute("SELECT password_hash, email_verified FROM users WHERE email = %s", (email,))
     result = cur.fetchone()
     cur.close()
     conn.close()
-    if result and bcrypt.checkpw(password.encode('utf-8'), result[0].encode('utf-8')):
-        log_action(email, "تسجيل دخول ناجح")
-        return True
+    if result:
+        if not result[1]:
+            return "unverified"
+        if bcrypt.checkpw(password.encode('utf-8'), result[0].encode('utf-8')):
+            return True
     return False
+
+def verify_token(token):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET email_verified = TRUE, verify_token = NULL WHERE verify_token = %s RETURNING email", (token,))
+    result = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+    return result is not None
 
 def save_file_to_db(email, filename, df):
     conn = get_db_connection()
@@ -81,7 +114,6 @@ def save_file_to_db(email, filename, df):
     try:
         cur.execute("INSERT INTO user_files (user_email, file_name, file_data) VALUES (%s, %s, %s)", (email, filename, json_data))
         conn.commit()
-        log_action(email, f"رفع ملف: {filename}")
         return True
     except Exception:
         return False
@@ -104,7 +136,6 @@ def delete_user_file(file_id, user_email):
     try:
         cur.execute("DELETE FROM user_files WHERE id = %s AND user_email = %s", (file_id, user_email))
         conn.commit()
-        log_action(user_email, f"حذف ملف برقم {file_id}")
         return True
     except Exception:
         return False
@@ -123,8 +154,20 @@ if 'show_reset' not in st.session_state:
     st.session_state.show_reset = False
 if 'show_privacy' not in st.session_state:
     st.session_state.show_privacy = False
+if 'show_verify' not in st.session_state:
+    st.session_state.show_verify = False
 
-# --- استرجاع الجلسة من الكوكيز ---
+# --- التحقق من رابط التفعيل في الرابط (URL) ---
+query_params = st.query_params
+if "verify" in query_params:
+    token = query_params["verify"]
+    if verify_token(token):
+        st.success("✅ تم تفعيل حسابك بنجاح! يمكنك الآن تسجيل الدخول.")
+    else:
+        st.error("❌ رابط التفعيل غير صالح أو مستخدم مسبقاً.")
+    st.stop()
+
+# --- استرجاع الجلسة ---
 if not st.session_state.logged_in:
     saved_session = cookie_manager.get(cookie="app_session")
     if saved_session:
@@ -154,7 +197,6 @@ if not st.session_state.logged_in:
                 hashed = bcrypt.hashpw(new_pass.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
                 cur.execute("UPDATE users SET password_hash = %s WHERE email = %s", (hashed, reset_email))
                 conn.commit()
-                log_action(reset_email, "تغيير كلمة المرور")
                 st.success("تم التغيير بنجاح!")
                 st.session_state.show_reset = False
                 st.rerun()
@@ -177,21 +219,39 @@ if not st.session_state.logged_in:
         if st.button("العودة"):
             st.session_state.show_privacy = False
             st.rerun()
+    elif st.session_state.show_verify:
+        st.subheader("📧 تفعيل الحساب")
+        st.write("أدخل الرمز الذي أرسلناه إلى بريدك الإلكتروني:")
+        token_input = st.text_input("رمز التحقق")
+        if st.button("تفعيل"):
+            if verify_token(token_input):
+                st.success("✅ تم التفعيل! يمكنك الآن تسجيل الدخول.")
+                st.session_state.show_verify = False
+                st.rerun()
+            else:
+                st.error("رمز غير صحيح.")
+        if st.button("العودة"):
+            st.session_state.show_verify = False
+            st.rerun()
     else:
         tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
         with tab1:
             login_email = st.text_input("البريد الإلكتروني", key="login_email")
             login_pass = st.text_input("كلمة المرور", type="password", key="login_pass")
-            
             remember_me = st.checkbox("تذكرني (حفظ الجلسة)")
             
             if st.button("دخول", type="primary"):
-                if verify_user(login_email, login_pass):
+                status = verify_user(login_email, login_pass)
+                if status is True:
                     st.session_state.logged_in = True
                     st.session_state.user_email = login_email
                     if remember_me:
                         session_data = json.dumps({"email": login_email})
                         cookie_manager.set("app_session", session_data)
+                    st.rerun()
+                elif status == "unverified":
+                    st.error("⚠️ يرجى تفعيل بريدك الإلكتروني أولاً.")
+                    st.session_state.show_verify = True
                     st.rerun()
                 else:
                     st.error("البريد الإلكتروني أو كلمة المرور غير صحيحة.")
@@ -216,7 +276,8 @@ if not st.session_state.logged_in:
                 elif not security_q:
                     st.warning("الرجاء إدخال إجابة سؤال الأمان.")
                 elif create_user(new_email, new_pass, security_q):
-                    st.success("تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول.")
+                    st.session_state.show_verify = True
+                    st.rerun()
                 else:
                     st.error("هذا البريد الإلكتروني مسجل مسبقاً.")
     st.stop()
@@ -308,7 +369,6 @@ if st.sidebar.button(t["clear"]):
     st.session_state.df = None
     st.rerun()
 if st.sidebar.button("تسجيل الخروج"):
-    log_action(st.session_state.user_email, "تسجيل خروج")
     cookie_manager.delete("app_session")
     st.session_state.logged_in = False
     st.session_state.user_email = None
