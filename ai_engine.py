@@ -7,6 +7,7 @@ def ask_ai_about_data(user_question, df):
     if not api_key:
         return "⚠️ مفتاح OpenRouter API غير موجود."
 
+    # تجهيز ملخص البيانات
     summary = df.describe(include='all').to_string()
     columns = df.columns.tolist()
     
@@ -27,7 +28,8 @@ def ask_ai_about_data(user_question, df):
         "Content-Type": "application/json"
     }
     data = {
-        "model": "meta-llama/llama-3.3-70b-instruct:free",  # نموذج مجاني
+        # استخدام الموجّه المجاني لاختيار أي نموذج متاح تلقائياً
+        "model": "openrouter/free", 
         "messages": [
             {"role": "system", "content": "أنت مساعد تحليل بيانات محترف."},
             {"role": "user", "content": prompt}
