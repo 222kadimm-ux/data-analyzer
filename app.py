@@ -4,10 +4,11 @@ import plotly.express as px
 import io
 import json
 import time
+import re
 from database import init_db, save_file, get_files, delete_file
 from auth import create_user, verify_user, login_user, logout_user
 from ai_engine import ask_ai_about_data
-from gsheets_integration import load_from_google_sheets # <-- استيراد ميزة Google Sheets
+from gsheets_integration import load_from_google_sheets
 
 # تهيئة الإعدادات
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
@@ -41,7 +42,6 @@ if not st.session_state.logged_in:
     tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
     
     with tab1:
-        # الحماية من المحاولات المتكررة
         if 'login_attempts' not in st.session_state: st.session_state.login_attempts = 0
         if 'last_attempt_time' not in st.session_state: st.session_state.last_attempt_time = 0
         
@@ -86,21 +86,38 @@ if not st.session_state.logged_in:
 # ==========================================
 st.sidebar.write(f"👤 {st.session_state.user_email}")
 
-# زر لوحة المدير يظهر فقط للمدير
+# زر لوحة المدير
 if st.session_state.user_role == "admin":
     st.sidebar.page_link("pages/1_Admin_Panel.py", label="👑 لوحة المدير", icon="👑")
 
 # --- ميزة Google Sheets ---
 st.sidebar.divider()
 st.sidebar.subheader("🔗 التكاملات الخارجية")
-if st.sidebar.button("📊 الاتصال بـ Google Sheets"):
-    sheet_df = load_from_google_sheets()
-    if sheet_df is not None:
-        st.session_state.df = sheet_df
-        # حفظ الملف في قاعدة البيانات أيضاً
-        save_file(st.session_state.user_email, "Google_Sheets_Data", sheet_df)
-        st.sidebar.success("✅ تم سحب البيانات بنجاح!")
-        st.rerun()
+with st.sidebar.expander("📊 سحب من Google Sheets"):
+    gs_url = st.text_input("أدخل رابط الشيت (URL):", key="gs_url")
+    if st.button("سحب البيانات", key="gs_btn"):
+        if gs_url:
+            with st.spinner("جارٍ سحب البيانات..."):
+                try:
+                    # تحويل الرابط تلقائياً إلى صيغة CSV القابلة للقراءة
+                    if "/edit" in gs_url:
+                        csv_url = gs_url.split("/edit")[0] + "/export?format=csv"
+                    else:
+                        csv_url = gs_url
+                    
+                    df = pd.read_csv(csv_url)
+                    
+                    if df.empty:
+                        st.sidebar.warning("الجدول فارغ!")
+                    else:
+                        st.session_state.df = df
+                        save_file(st.session_state.user_email, "Google_Sheets_Data", df)
+                        st.sidebar.success("✅ تم سحب البيانات بنجاح!")
+                        st.rerun()
+                except Exception as e:
+                    st.sidebar.error(f"❌ فشل الاتصال. تأكد من أن الشيت مشارك للعامة (Anyone with the link).\n الخطأ: {e}")
+        else:
+            st.sidebar.warning("الرجاء إدخال الرابط.")
 
 # سجل الملفات
 st.sidebar.divider()
@@ -109,8 +126,16 @@ files = get_files(st.session_state.user_email)
 for f in files:
     col1, col2 = st.sidebar.columns([4, 1])
     if col1.button(f"{f[1]}", key=f"load_{f[0]}"):
-        st.session_state.df = pd.DataFrame(json.loads(f[2]))
-        st.rerun()
+        try:
+            # إصلاح خطأ قراءة الملفات القديمة
+            data = f[2]
+            if isinstance(data, str):
+                data = json.loads(data)
+            st.session_state.df = pd.DataFrame(data)
+            st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"خطأ في قراءة الملف: {e}")
+            
     if col2.button("🗑️", key=f"del_{f[0]}"):
         delete_file(f[0], st.session_state.user_email)
         st.rerun()
