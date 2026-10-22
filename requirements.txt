@@ -7,3 +7,5 @@ groq
 extra-streamlit-components
 tenacity
 openpyxl
+gspread
+google-auth
