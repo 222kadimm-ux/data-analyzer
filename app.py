@@ -1,21 +1,18 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import psycopg2
-import bcrypt
-import json
 import io
+import json
 import time
-from groq import Groq
-import extra_streamlit_components as stx
-from tenacity import retry, stop_after_attempt, wait_fixed
+from database import init_db, save_file, get_files, delete_file
+from auth import create_user, verify_user, login_user, logout_user
+from ai_engine import ask_ai_about_data
+from gsheets_integration import load_from_google_sheets # <-- استيراد ميزة Google Sheets
 
-# --- إعدادات قاعدة البيانات ---
-DB_URL = "postgresql://neondb_owner:npg_qVub1K6DCvcz@ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
-
+# تهيئة الإعدادات
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
-# --- تصميم مخصص ---
+# تصميم CSS
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; }
@@ -24,409 +21,161 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- إعدادات الذكاء الاصطناعي (Groq) ---
-try:
-    groq_client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-except Exception:
-    groq_client = None
+# تهيئة قاعدة البيانات مرة واحدة
+if 'db_initialized' not in st.session_state:
+    init_db()
+    st.session_state.db_initialized = True
 
-# --- إدارة الكوكيز ---
-cookie_manager = stx.CookieManager(key="cookie_manager")
+# إدارة الحالة
+if 'logged_in' not in st.session_state: st.session_state.logged_in = False
+if 'user_email' not in st.session_state: st.session_state.user_email = None
+if 'user_role' not in st.session_state: st.session_state.user_role = None
+if 'df' not in st.session_state: st.session_state.df = None
 
-# --- دوال قاعدة البيانات (مع Retry) ---
-@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-def get_db_connection():
-    return psycopg2.connect(DB_URL)
-
-def create_user(email, password, security_answer):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-    try:
-        cur.execute("INSERT INTO users (email, password_hash, security_answer, email_verified) VALUES (%s, %s, %s, TRUE)", (email, hashed, security_answer))
-        conn.commit()
-        return True
-    except psycopg2.errors.UniqueViolation:
-        return False
-    finally:
-        cur.close()
-        conn.close()
-
-def verify_user(email, password):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT password_hash FROM users WHERE email = %s", (email,))
-    result = cur.fetchone()
-    cur.close()
-    conn.close()
-    if result and bcrypt.checkpw(password.encode('utf-8'), result[0].encode('utf-8')):
-        return True
-    return False
-
-def save_file_to_db(email, filename, df):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    json_data = df.to_json(orient='records')
-    try:
-        cur.execute("INSERT INTO user_files (user_email, file_name, file_data) VALUES (%s, %s, %s)", (email, filename, json_data))
-        conn.commit()
-        return True
-    except Exception:
-        return False
-    finally:
-        cur.close()
-        conn.close()
-
-def get_user_files(email):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT id, file_name, file_data, created_at FROM user_files WHERE user_email = %s ORDER BY created_at DESC", (email,))
-    files = cur.fetchall()
-    cur.close()
-    conn.close()
-    return files
-
-def delete_user_file(file_id, user_email):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute("DELETE FROM user_files WHERE id = %s AND user_email = %s", (file_id, user_email))
-        conn.commit()
-        return True
-    except Exception:
-        return False
-    finally:
-        cur.close()
-        conn.close()
-
-# --- إدارة الجلسة ---
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-if 'user_email' not in st.session_state:
-    st.session_state.user_email = None
-if 'df' not in st.session_state:
-    st.session_state.df = None
-if 'show_privacy' not in st.session_state:
-    st.session_state.show_privacy = False
-
-# --- ميزة Rate Limiting (حظر المحاولات) ---
-if 'login_attempts' not in st.session_state:
-    st.session_state.login_attempts = 0
-if 'last_attempt_time' not in st.session_state:
-    st.session_state.last_attempt_time = 0
-
-# --- استرجاع الجلسة من الكوكيز ---
-if not st.session_state.logged_in:
-    saved_session = cookie_manager.get(cookie="app_session")
-    if saved_session:
-        try:
-            session_data = json.loads(saved_session)
-            st.session_state.logged_in = True
-            st.session_state.user_email = session_data["email"]
-            st.rerun()
-        except:
-            pass
-
-# --- شاشة تسجيل الدخول ---
+# ==========================================
+# شاشة تسجيل الدخول
+# ==========================================
 if not st.session_state.logged_in:
     st.title("🔐 مرحباً بك في منصة تحليل البيانات")
     
-    if st.session_state.show_privacy:
-        st.subheader("📜 سياسة الخصوصية")
-        st.write("نحن نحترم خصوصيتك...")
-        if st.button("العودة"):
-            st.session_state.show_privacy = False
-            st.rerun()
-    else:
-        tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
+    tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
+    
+    with tab1:
+        # الحماية من المحاولات المتكررة
+        if 'login_attempts' not in st.session_state: st.session_state.login_attempts = 0
+        if 'last_attempt_time' not in st.session_state: st.session_state.last_attempt_time = 0
         
-        with tab1:
-            # التحقق من الحظر
-            if st.session_state.login_attempts >= 5:
-                if time.time() - st.session_state.last_attempt_time < 60:
-                    st.error("🚫 تم حظرك مؤقتاً بسبب محاولات دخول خاطئة. يرجى الانتظار دقيقة.")
-                    st.stop()
-                else:
-                    st.session_state.login_attempts = 0 # إعادة تعيين العداد بعد دقيقة
-            
-            login_email = st.text_input("البريد الإلكتروني", key="login_email")
-            login_pass = st.text_input("كلمة المرور", type="password", key="login_pass")
-            remember_me = st.checkbox("تذكرني (حفظ الجلسة)")
-            
-            if st.button("دخول", type="primary"):
-                if verify_user(login_email, login_pass):
-                    st.session_state.logged_in = True
-                    st.session_state.user_email = login_email
-                    st.session_state.login_attempts = 0 # تصفير العداد عند النجاح
-                    if remember_me:
-                        session_data = json.dumps({"email": login_email})
-                        cookie_manager.set("app_session", session_data)
-                    st.rerun()
-                else:
-                    st.session_state.login_attempts += 1
-                    st.session_state.last_attempt_time = time.time()
-                    st.error(f"البريد الإلكتروني أو كلمة المرور غير صحيحة. (المحاولة {st.session_state.login_attempts}/5)")
-            
-            if st.button("سياسة الخصوصية"):
-                st.session_state.show_privacy = True
+        if st.session_state.login_attempts >= 5:
+            if time.time() - st.session_state.last_attempt_time < 60:
+                st.error("🚫 تم حظرك مؤقتاً. انتظر دقيقة.")
+                st.stop()
+            else:
+                st.session_state.login_attempts = 0
+                
+        login_email = st.text_input("البريد الإلكتروني", key="l_email")
+        login_pass = st.text_input("كلمة المرور", type="password", key="l_pass")
+        
+        if st.button("دخول", type="primary"):
+            if verify_user(login_email, login_pass):
+                st.session_state.login_attempts = 0
+                login_user(login_email)
                 st.rerun()
-                    
-        with tab2:
-            new_email = st.text_input("البريد الإلكتروني الجديد", key="new_email")
-            new_pass = st.text_input("كلمة المرور الجديدة", type="password", key="new_pass")
-            security_q = st.text_input("سؤال الأمان (مثلاً: اسم مدينتك المفضلة؟)", key="security_q")
-            
-            # ميزة CAPTCHA (سؤال رياضي بسيط)
-            captcha_answer = st.number_input("أثبت أنك إنسان: ما هو ناتج 3 + 7 ؟", min_value=0, step=1)
-            
-            if st.button("إنشاء الحساب"):
-                if len(new_pass) < 6:
-                    st.warning("كلمة المرور يجب أن تكون 6 أحرف على الأقل.")
-                elif not security_q:
-                    st.warning("الرجاء إدخال إجابة سؤال الأمان.")
-                elif captcha_answer != 10:
-                    st.error("❌ إجابة التحقق (CAPTCHA) خاطئة. حاول مرة أخرى.")
-                elif create_user(new_email, new_pass, security_q):
-                    st.success("✅ تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول.")
-                else:
-                    st.error("هذا البريد الإلكتروني مسجل مسبقاً.")
+            else:
+                st.session_state.login_attempts += 1
+                st.session_state.last_attempt_time = time.time()
+                st.error(f"بيانات خاطئة. المحاولة {st.session_state.login_attempts}/5")
+                
+    with tab2:
+        new_email = st.text_input("البريد الإلكتروني الجديد", key="n_email")
+        new_pass = st.text_input("كلمة المرور (6 أحرف على الأقل)", type="password", key="n_pass")
+        captcha = st.number_input("أثبت أنك إنسان: 3 + 7 = ؟", min_value=0)
+        
+        if st.button("إنشاء الحساب"):
+            if len(new_pass) < 6:
+                st.warning("كلمة المرور قصيرة جداً.")
+            elif captcha != 10:
+                st.error("إجابة التحقق خاطئة.")
+            elif create_user(new_email, new_pass):
+                st.success("✅ تم إنشاء الحساب! يمكنك الدخول الآن.")
+            else:
+                st.error("البريد مسجل مسبقاً.")
     st.stop()
 
-# --- التطبيق بعد تسجيل الدخول ---
+# ==========================================
+# التطبيق الرئيسي (بعد الدخول)
+# ==========================================
 st.sidebar.write(f"👤 {st.session_state.user_email}")
 
-# الترجمة
-lang = st.sidebar.radio("Language / اللغة", ["العربية", "English"])
-t = {
-    "العربية": {
-        "title": "💼 منصة تحليل البيانات الاحترافية",
-        "upload": "📂 رفع ملف جديد (Excel/CSV)",
-        "history": "🗂️ ملفاتي السابقة",
-        "export": "📥 تحميل التقرير (CSV)",
-        "export_excel": "📥 تحميل التقرير (Excel)",
-        "clear": "🗑️ مسح الشاشة",
-        "stats": "📊 لوحة القيادة",
-        "charts": "📈 التحليل البياني",
-        "data": "📋 البيانات الخام",
-        "insights": "🧠 التحليل الذكي",
-        "demo": "📊 عرض بيانات تجريبية",
-        "chat": "💬 المحادثة مع البيانات (AI)",
-        "gdpr": "📤 تصدير بياناتي (GDPR)",
-        "search": "🔍 البحث والتصفية"
-    },
-    "English": {
-        "title": "💼 Pro Data Analytics Platform",
-        "upload": "📂 Upload New File (Excel/CSV)",
-        "history": "🗂️ My Previous Files",
-        "export": "📥 Export Report (CSV)",
-        "export_excel": "📥 Export Report (Excel)",
-        "clear": "🗑️ Clear Screen",
-        "stats": "📊 Dashboard",
-        "charts": "📈 Charts",
-        "data": "📋 Raw Data",
-        "insights": "🧠 Smart Insights",
-        "demo": "📊 Show Demo Data",
-        "chat": "💬 Chat with Data (AI)",
-        "gdpr": "📤 Export My Data (GDPR)",
-        "search": "🔍 Search & Filter"
-    }
-}[lang]
+# زر لوحة المدير يظهر فقط للمدير
+if st.session_state.user_role == "admin":
+    st.sidebar.page_link("pages/1_Admin_Panel.py", label="👑 لوحة المدير", icon="👑")
 
-# --- زر البيانات التجريبية ---
-if st.sidebar.button(t["demo"]):
-    demo_data = {
-        'Product': ['Shirt', 'Pants', 'Shoes', 'Jacket', 'Shirt', 'Shoes'],
-        'Amount': [1500, 2500, 4000, 6000, 1500, 4000],
-        'Month': ['Jan', 'Jan', 'Feb', 'Feb', 'Mar', 'Mar']
-    }
-    st.session_state.df = pd.DataFrame(demo_data)
-    st.rerun()
-
-# --- القائمة الجانبية: سجل الملفات ---
+# --- ميزة Google Sheets ---
 st.sidebar.divider()
-st.sidebar.subheader(t["history"])
-user_files = get_user_files(st.session_state.user_email)
-if user_files:
-    for f in user_files:
-        col1, col2 = st.sidebar.columns([3, 1])
-        with col1:
-            if st.button(f"{f[1]} ({f[3].strftime('%Y-%m-%d')})", key=f"load_{f[0]}"):
-                json_data = f[2]
-                if isinstance(json_data, str):
-                    st.session_state.df = pd.DataFrame(json.loads(json_data))
-                else:
-                    st.session_state.df = pd.DataFrame(json_data)
-                st.rerun()
-        with col2:
-            if st.button("🗑️", key=f"del_{f[0]}"):
-                if delete_user_file(f[0], st.session_state.user_email):
-                    st.success("تم الحذف!")
-                    st.rerun()
-else:
-    st.sidebar.info("لا توجد ملفات سابقة.")
+st.sidebar.subheader("🔗 التكاملات الخارجية")
+if st.sidebar.button("📊 الاتصال بـ Google Sheets"):
+    sheet_df = load_from_google_sheets()
+    if sheet_df is not None:
+        st.session_state.df = sheet_df
+        # حفظ الملف في قاعدة البيانات أيضاً
+        save_file(st.session_state.user_email, "Google_Sheets_Data", sheet_df)
+        st.sidebar.success("✅ تم سحب البيانات بنجاح!")
+        st.rerun()
 
-# --- GDPR Export ---
-if st.sidebar.button(t["gdpr"]):
-    all_data = {"files": [{"name": f[1], "data": f[2]} for f in user_files]}
-    st.sidebar.download_button(
-        label="تحميل البيانات",
-        data=json.dumps(all_data, ensure_ascii=False, indent=4),
-        file_name=f"my_data_{st.session_state.user_email}.json",
-        mime="application/json"
-    )
+# سجل الملفات
+st.sidebar.divider()
+st.sidebar.subheader("🗂️ ملفاتي السابقة")
+files = get_files(st.session_state.user_email)
+for f in files:
+    col1, col2 = st.sidebar.columns([4, 1])
+    if col1.button(f"{f[1]}", key=f"load_{f[0]}"):
+        st.session_state.df = pd.DataFrame(json.loads(f[2]))
+        st.rerun()
+    if col2.button("🗑️", key=f"del_{f[0]}"):
+        delete_file(f[0], st.session_state.user_email)
+        st.rerun()
 
-if st.sidebar.button(t["clear"]):
-    st.session_state.df = None
-    st.rerun()
 if st.sidebar.button("تسجيل الخروج"):
-    cookie_manager.delete("app_session")
-    st.session_state.logged_in = False
-    st.session_state.user_email = None
-    st.session_state.df = None
-    st.rerun()
+    logout_user()
 
-# --- الواجهة الرئيسية ---
-st.title(t["title"])
-uploaded_file = st.file_uploader(t["upload"], type=["xlsx", "csv"])
+# ==========================================
+# تحليل البيانات
+# ==========================================
+st.title("💼 منصة تحليل البيانات الاحترافية")
+uploaded_file = st.file_uploader("📂 رفع ملف جديد (Excel/CSV)", type=["xlsx", "csv"])
 
-if uploaded_file is not None:
-    with st.spinner("جارٍ تحليل الملف..."): # Spinner
+if uploaded_file:
+    with st.spinner("جارٍ تحليل الملف..."):
         try:
             if uploaded_file.name.endswith('.csv'):
                 df = pd.read_csv(uploaded_file)
             else:
                 df = pd.read_excel(uploaded_file)
+            df = df.dropna().drop_duplicates()
             
-            df = df.dropna()
-            df = df.drop_duplicates()
-            
-            if save_file_to_db(st.session_state.user_email, uploaded_file.name, df):
+            if save_file(st.session_state.user_email, uploaded_file.name, df):
                 st.session_state.df = df
-                st.success(f"✅ {uploaded_file.name}")
+                st.success(f"✅ تم رفع {uploaded_file.name} بنجاح")
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"خطأ في قراءة الملف: {e}")
 
 if st.session_state.df is not None:
     df = st.session_state.df
-    st.divider()
     
-    # --- ميزة البحث والتصفية ---
-    st.subheader(t["search"])
-    search_query = st.text_input("ابحث عن منتج أو قيمة معينة (اتركه فارغاً لعرض الكل):")
+    # إحصائيات
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    cat_cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
     
-    if search_query:
-        mask = df.astype(str).apply(lambda x: x.str.contains(search_query, case=False)).any(axis=1)
-        df = df[mask]
-        if df.empty:
-            st.warning("⚠️ لا توجد نتائج مطابقة لبحثك.")
-            st.stop()
-        else:
-            st.success(f"تم العثور على {len(df)} نتيجة.")
-            
-    st.divider()
-    
-    numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
-    categorical_cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
-
-    if numeric_cols and categorical_cols:
-        st.subheader(t["stats"])
+    if numeric_cols and cat_cols:
         c1, c2, c3 = st.columns(3)
-        with c1: st.metric("Total", len(df))
-        with c2: st.metric(f"Sum ({numeric_cols[0]})", f"{df[numeric_cols[0]].sum():,.0f}")
+        c1.metric("إجمالي العمليات", len(df))
+        c2.metric(f"الإجمالي ({numeric_cols[0]})", f"{df[numeric_cols[0]].sum():,.0f}")
+        best_item = df.groupby(cat_cols[0])[numeric_cols[0]].sum().idxmax()
+        c3.metric("أفضل منتج", best_item)
         
-        best_item = df.groupby(categorical_cols[0])[numeric_cols[0]].sum().idxmax()
-        best_value = df.groupby(categorical_cols[0])[numeric_cols[0]].sum().max()
-        with c3: st.metric(f"Top ({categorical_cols[0]})", best_item)
-
-        st.divider()
-        st.subheader(t["insights"])
-        insights = []
-        insights.append(f"المنتج الأكثر ربحاً هو '{best_item}' بقيمة إجمالية {best_value:,.0f}. يجب التركيز على توفيره.")
-        avg_value = df[numeric_cols[0]].mean()
-        insights.append(f"متوسط قيمة العمليات هو {avg_value:,.2f}. إذا كانت التكلفة أعلى من هذا، فأنت تخسر.")
-        if len(df) > 10:
-            insights.append("حجم البيانات جيد جداً، يمكنك الآن الاعتماد على هذه الأرقام لاتخاذ قراراتك القادمة.")
-        else:
-            insights.append("حجم البيانات صغير، قد لا تعكس النتائج الواقع بدقة. حاول جمع المزيد من البيانات.")
-
-        for insight in insights:
-            st.info(insight)
-
-        st.divider()
-        
-        # --- أزرار التصدير (CSV و Excel) ---
-        col_csv, col_excel = st.columns(2)
-        
-        with col_csv:
-            csv = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(label=t["export"], data=csv, file_name='report.csv', mime='text/csv')
-            
-        with col_excel:
-            excel_buffer = io.BytesIO()
-            with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Report')
-            excel_data = excel_buffer.getvalue()
-            
-            st.download_button(
-                label=t["export_excel"], 
-                data=excel_data, 
-                file_name='report.xlsx', 
-                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-            )
-
-        st.subheader(t["charts"])
-        c1, c2 = st.columns(2)
-        with c1: col_x = st.selectbox("Category", categorical_cols)
-        with c2: col_y = st.selectbox("Value", numeric_cols)
-
-        chart_data = df.groupby(col_x)[col_y].sum().reset_index().sort_values(by=col_y, ascending=False)
-
+        # الرسوم البيانية
+        st.subheader("📈 التحليل البياني")
+        chart_data = df.groupby(cat_cols[0])[numeric_cols[0]].sum().reset_index()
         c1, c2 = st.columns(2)
         with c1:
-            fig_bar = px.bar(chart_data, x=col_x, y=col_y, color=col_y, color_continuous_scale='Teal')
-            fig_bar.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='white')
-            st.plotly_chart(fig_bar, use_container_width=True)
+            st.plotly_chart(px.bar(chart_data, x=cat_cols[0], y=numeric_cols[0], color=numeric_cols[0]), use_container_width=True)
         with c2:
-            fig_pie = px.pie(chart_data, names=col_x, values=col_y, hole=0.4)
-            fig_pie.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='white')
-            st.plotly_chart(fig_pie, use_container_width=True)
-
-        # --- المحادثة مع البيانات (Chat with Data) ---
+            st.plotly_chart(px.pie(chart_data, names=cat_cols[0], values=numeric_cols[0]), use_container_width=True)
+            
+        # الذكاء الاصطناعي
         st.divider()
-        st.subheader(t["chat"])
-        st.write("اسأل عن بياناتك (مثال: ما هو أفضل منتج؟ كم إجمالي المبيعات؟)")
-        
-        user_question = st.text_input("اكتب سؤالك هنا...")
-        
-        if user_question:
-            if groq_client:
-                with st.spinner("الذكاء الاصطناعي يفكر..."):
-                    sample_data = df.head(10).to_json(orient='records')
-                    prompt = f"""
-                    أنت محلل بيانات. لدي بيانات مبيعات (عينة من 10 صفوف):
-                    {sample_data}
-                    
-                    المستخدم يسأل: "{user_question}"
-                    
-                    أجب على السؤال باللغة العربية بناءً على البيانات. إذا لم تكن الإجابة موجودة، قل ذلك.
-                    """
-                    try:
-                        models = groq_client.models.list()
-                        available_model = models.data[0].id
-                        chat_completion = groq_client.chat.completions.create(
-                            messages=[
-                                {"role": "system", "content": "أنت محلل بيانات ذكي."},
-                                {"role": "user", "content": prompt}
-                            ],
-                            model=available_model,
-                        )
-                        st.success(chat_completion.choices[0].message.content)
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-            else:
-                st.warning("يرجى التأكد من إضافة GROQ_API_KEY في إعدادات Streamlit Secrets.")
-
-        with st.expander(t["data"]):
-            st.dataframe(df, use_container_width=True)
-    else:
-        st.warning("⚠️ البيانات غير كافية.")
+        st.subheader("💬 المحادثة مع البيانات (AI)")
+        question = st.text_input("اسأل عن بياناتك (مثال: ما هو أفضل منتج؟)")
+        if question:
+            with st.spinner("AI يفكر..."):
+                answer = ask_ai_about_data(question, df)
+                st.success(answer)
+                
+        # تصدير
+        st.divider()
+        c1, c2 = st.columns(2)
+        c1.download_button("📥 تحميل CSV", df.to_csv(index=False).encode('utf-8-sig'), "data.csv", "text/csv")
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False)
+        c2.download_button("📥 تحميل Excel", excel_buffer.getvalue(), "data.xlsx")
