@@ -1,23 +1,29 @@
 import streamlit as st
 import requests
-import pandas as pd
+import polars as pl
 
-def ask_ai_about_data(user_question, df):
+def ask_ai_about_data(user_question, df_polars):
     api_key = st.secrets.get("OPENROUTER_API_KEY")
     if not api_key:
         return "⚠️ مفتاح API غير موجود."
 
-    # استخراج إحصائيات متقدمة
+    # تحويل Polars إلى Pandas مؤقتاً (لإرسال الملخص فقط)
+    # نأخذ عينة صغيرة لتوفير الذاكرة إذا كان الملف ضخماً
+    if df_polars.height > 10000:
+        df_pandas = df_polars.sample(n=10000, seed=42).to_pandas()
+    else:
+        df_pandas = df_polars.to_pandas()
+
     try:
-        numeric_df = df.select_dtypes(include=['number'])
+        numeric_df = df_pandas.select_dtypes(include=['number'])
         stats = numeric_df.describe().to_string()
         correlations = numeric_df.corr().to_string()
     except:
         stats = "لا توجد أعمدة رقمية كافية."
         correlations = "لا توجد ارتباطات."
 
-    columns = df.columns.tolist()
-    missing = df.isnull().sum().to_string()
+    columns = df_polars.columns
+    missing = df_pandas.isnull().sum().to_string()
     
     prompt = f"""
     أنت محلل بيانات خبير (Senior Data Analyst). 
@@ -36,8 +42,8 @@ def ask_ai_about_data(user_question, df):
     
     المطلوب:
     1. أجب على السؤال بدقة بناءً على الأرقام أعلاه.
-    2. إذا كان السؤال عاماً، قدم تحليلاً شاملاً: ما هو أفضل منتج؟ ما هي العلاقات بين الأعمدة؟ هل هناك قيم متطرفة؟
-    3. اكتب الإجابة بلغة عربية احترافية ومنظمة (استخدم نقاط واضحة).
+    2. إذا كان السؤال عاماً، قدم تحليلاً شاملاً.
+    3. اكتب الإجابة بلغة عربية احترافية ومنظمة.
     """
 
     url = "https://openrouter.ai/api/v1/chat/completions"
