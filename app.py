@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import polars as pl
 import plotly.express as px
 import io
 import json
@@ -10,7 +11,7 @@ from auth import create_user, verify_user, login_user, logout_user
 from ai_engine import ask_ai_about_data
 
 # ==========================================
-# 1. إعدادات الصفحة والمراقبة (مع حماية الخصوصية)
+# 1. إعدادات الصفحة والمراقبة
 # ==========================================
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
@@ -18,7 +19,7 @@ try:
     sentry_sdk.init(
         dsn=st.secrets.get("SENTRY_DSN", ""),
         traces_sample_rate=1.0,
-        send_default_pii=False  # لا نرسل بيانات شخصية إلى Sentry
+        send_default_pii=False 
     )
 except Exception:
     pass
@@ -106,7 +107,7 @@ else:
             try:
                 data = f[2]
                 if isinstance(data, str): data = json.loads(data)
-                st.session_state.df = pd.DataFrame(data)
+                st.session_state.df = pl.from_pandas(pd.DataFrame(data))
                 st.rerun()
             except: pass
         if col2.button("🗑️", key=f"del_{f[0]}"):
@@ -122,21 +123,20 @@ else:
             else:
                 st.error("حدث خطأ.")
 
-# زر سياسة الخصوصية في القائمة الجانبية
+# زر سياسة الخصوصية
 st.sidebar.divider()
 if st.sidebar.button("📜 سياسة الخصوصية"):
     st.session_state.show_privacy = True
     st.rerun()
 
-# عرض سياسة الخصوصية
 if st.session_state.show_privacy:
     st.title("📜 سياسة الخصوصية")
     st.markdown("""
     - **لا نجمع بيانات شخصية (PII):** لا نطلب اسمك أو رقم هاتفك.
-    - **الكوكيز (Cookies):** نستخدم كوكيز تقني فقط لحفظ الجلسة أثناء استخدامك للتطبيق.
+    - **الكوكيز (Cookies):** نستخدم كوكيز تقني فقط لحفظ الجلسة.
     - **مدة الاحتفاظ:** يتم حذف البيانات والملفات المؤقتة تلقائياً بعد 30 يوماً.
     - **حق المسح:** يمكنك حذف حسابك وبياناتك في أي وقت.
-    - **الذكاء الاصطناعي:** نرسل ملخص البيانات فقط (وليس الملف كاملاً) إلى OpenRouter لتوليد الإجابات.
+    - **الذكاء الاصطناعي:** نرسل ملخص البيانات فقط (وليس الملف كاملاً) إلى OpenRouter.
     """)
     if st.button("العودة للتطبيق"):
         st.session_state.show_privacy = False
@@ -148,16 +148,15 @@ if st.session_state.show_privacy:
 # ==========================================
 st.title("💼 محلل البيانات الاحترافي (AI Data Analyst)")
 st.info("💡 ملاحظة: قد يستغرق بدء التطبيق 30 ثانية بعد فترات الخمول (Streamlit Cloud).")
-st.caption("الحد الأقصى لحجم الملف: 50 ميجابايت.")
+st.caption("الحد الأقصى الموصى به لحجم الملف: 500 ميجابايت.")
 
-# زر البيانات التجريبية
 if st.button("📊 تجربة سريعة (بيانات تجريبية)"):
     demo_data = {
         'Product': ['Shirt', 'Pants', 'Shoes', 'Jacket', 'Shirt', 'Shoes'],
         'Amount': [1500, 2500, 4000, 6000, 1500, 4000],
         'Month': ['Jan', 'Jan', 'Feb', 'Feb', 'Mar', 'Mar']
     }
-    st.session_state.df = pd.DataFrame(demo_data)
+    st.session_state.df = pl.from_pandas(pd.DataFrame(demo_data))
     st.rerun()
 
 st.divider()
@@ -168,22 +167,22 @@ with tab_upload:
     uploaded_file = st.file_uploader("اختر ملف Excel أو CSV", type=["xlsx", "csv"])
     
     if uploaded_file:
-        # التحقق من حجم الملف
-        if uploaded_file.size > 50 * 1024 * 1024:
-            st.error("🚫 الملف كبير جداً! الحد الأقصى هو 50 ميجابايت.")
-            st.stop()
-            
-        with st.spinner("جارٍ تحليل الملف..."):
+        with st.spinner("جارٍ تحليل الملف (قد يستغرق بعض الوقت للملفات الكبيرة)..."):
             try:
                 if uploaded_file.name.endswith('.csv'):
-                    df = pd.read_csv(uploaded_file)
+                    df = pl.read_csv(uploaded_file, infer_schema_length=10000)
                 else:
-                    df = pd.read_excel(uploaded_file)
-                df = df.dropna().drop_duplicates()
+                    # Polars يدعم Excel عبر engine='calamine' أو xlsx2csv
+                    df = pl.read_excel(uploaded_file)
+                
+                df = df.drop_nulls().unique()
                 st.session_state.df = df
+                
                 if st.session_state.logged_in:
-                    save_file(st.session_state.user_email, uploaded_file.name, df)
-                st.success("✅ تم رفع الملف بنجاح! اذهب للتبويب الثاني.")
+                    sample_to_save = df.head(5000).to_pandas() if df.height > 5000 else df.to_pandas()
+                    save_file(st.session_state.user_email, uploaded_file.name, sample_to_save)
+                    
+                st.success(f"✅ تم رفع {uploaded_file.name} بنجاح! ({df.height:,} صف)")
             except Exception as e:
                 st.error(f"خطأ في قراءة الملف: {e}")
 
@@ -191,18 +190,22 @@ with tab_dashboard:
     if st.session_state.df is None:
         st.info("⚠️ يرجى رفع ملف أولاً (أو استخدام البيانات التجريبية).")
     else:
-        df = st.session_state.df
+        df_pl = st.session_state.df
+        # تحويل إلى Pandas مؤقتاً للعرض والرسوم
+        df = df_pl.to_pandas()
+        
         numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
         cat_cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
         
         if numeric_cols and cat_cols:
             st.subheader("📊 الإحصائيات الأساسية")
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("إجمالي العمليات", len(df))
-            c2.metric(f"الإجمالي ({numeric_cols[0]})", f"{df[numeric_cols[0]].sum():,.0f}")
-            best_item = df.groupby(cat_cols[0])[numeric_cols[0]].sum().idxmax()
-            c3.metric("أفضل منتج", best_item)
-            c4.metric("متوسط القيمة", f"{df[numeric_cols[0]].mean():,.1f}")
+            c1.metric("إجمالي العمليات", f"{df_pl.height:,}")
+            c2.metric(f"الإجمالي ({numeric_cols[0]})", f"{df_pl[numeric_cols[0]].sum():,.0f}")
+            
+            best_item = df_pl.group_by(cat_cols[0]).agg(pl.col(numeric_cols[0]).sum()).sort(numeric_cols[0], descending=True).head(1)[cat_cols[0]][0]
+            c3.metric("أفضل منتج", str(best_item))
+            c4.metric("متوسط القيمة", f"{df_pl[numeric_cols[0]].mean():,.1f}")
 
             st.divider()
             col_left, col_right = st.columns(2)
