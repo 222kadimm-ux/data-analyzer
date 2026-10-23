@@ -23,14 +23,84 @@ try:
 except Exception:
     pass
 
-# تصميم CSS
+# تصميم CSS (واجهة حديثة مثل إنستغرام)
 st.markdown("""
     <style>
-    .stApp { background-color: #0e1117; }
-    div[data-testid="stMetric"] { background-color: #1e2130; padding: 15px; border-radius: 10px; border: 1px solid #3e4257; }
-    .stButton > button { border-radius: 8px; font-weight: bold; }
-    .stTabs [data-baseweb="tab-list"] { gap: 20px; }
-    .stTabs [data-baseweb="tab"] { padding: 10px 20px; border-radius: 10px; }
+    /* إخفاء شريط Streamlit العلوي */
+    header {visibility: hidden;}
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    /* الخلفية العامة */
+    .stApp { 
+        background-color: #fafafa; 
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    }
+    
+    /* البطاقات (Cards) */
+    div[data-testid="stMetric"] { 
+        background-color: #ffffff; 
+        padding: 20px; 
+        border-radius: 16px; 
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        border: 1px solid #dbdbdb;
+    }
+    
+    /* الأزرار */
+    .stButton > button {
+        background-color: #0095f6; 
+        color: white;
+        border-radius: 12px;
+        border: none;
+        padding: 10px 24px;
+        font-weight: 600;
+        transition: 0.3s;
+    }
+    .stButton > button:hover {
+        background-color: #007bb5;
+        transform: scale(1.02);
+    }
+    
+    /* مربعات الإدخال */
+    .stTextInput > div > div > input {
+        border-radius: 12px;
+        border: 1px solid #dbdbdb;
+        padding: 12px;
+        background-color: #fafafa;
+    }
+    
+    /* التبويبات (Tabs) */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 24px;
+        background-color: white;
+        padding: 10px;
+        border-radius: 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        padding: 10px 20px;
+        font-weight: 600;
+        color: #8e8e8e;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #0095f6;
+        color: white !important;
+    }
+    
+    /* القائمة الجانبية */
+    [data-testid="stSidebar"] {
+        background-color: #ffffff;
+        border-right: 1px solid #dbdbdb;
+    }
+    
+    /* الرسوم البيانية */
+    .stPlotlyChart {
+        background-color: white;
+        border-radius: 16px;
+        padding: 15px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -126,11 +196,9 @@ if not st.session_state.logged_in:
 # ==========================================
 st.sidebar.write(f"👤 {st.session_state.user_email}")
 
-# زر لوحة المدير
 if st.session_state.user_role == "admin":
     st.sidebar.page_link("pages/1_Admin_Panel.py", label="👑 لوحة المدير", icon="👑")
 
-# سجل الملفات
 st.sidebar.divider()
 st.sidebar.subheader("🗂️ ملفاتي السابقة")
 files = get_files(st.session_state.user_email)
@@ -148,7 +216,6 @@ for f in files:
         delete_file(f[0], st.session_state.user_email)
         st.rerun()
 
-# إدارة الحساب (GDPR)
 st.sidebar.divider()
 with st.sidebar.expander("⚙️ إدارة الحساب"):
     st.write("سيتم حذف جميع بياناتك وملفاتك نهائياً.")
