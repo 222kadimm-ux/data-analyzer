@@ -10,12 +10,16 @@ from auth import create_user, verify_user, login_user, logout_user
 from ai_engine import ask_ai_about_data
 
 # ==========================================
-# 1. إعدادات الصفحة والمراقبة
+# 1. إعدادات الصفحة والمراقبة (مع حماية الخصوصية)
 # ==========================================
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
 try:
-    sentry_sdk.init(dsn=st.secrets.get("SENTRY_DSN", ""), traces_sample_rate=1.0)
+    sentry_sdk.init(
+        dsn=st.secrets.get("SENTRY_DSN", ""),
+        traces_sample_rate=1.0,
+        send_default_pii=False  # لا نرسل بيانات شخصية إلى Sentry
+    )
 except Exception:
     pass
 
@@ -35,7 +39,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. تهيئة الجلسة (بدون تسجيل إجباري)
+# 2. تهيئة الجلسة
 # ==========================================
 if 'db_initialized' not in st.session_state:
     init_db()
@@ -44,6 +48,21 @@ if 'db_initialized' not in st.session_state:
 if 'df' not in st.session_state: st.session_state.df = None
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'user_email' not in st.session_state: st.session_state.user_email = None
+if 'show_privacy' not in st.session_state: st.session_state.show_privacy = False
+
+def delete_my_account(email):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM user_files WHERE user_email = %s", (email,))
+        cur.execute("DELETE FROM users WHERE email = %s", (email,))
+        conn.commit()
+        return True
+    except:
+        return False
+    finally:
+        cur.close()
+        conn.close()
 
 # ==========================================
 # 3. القائمة الجانبية (اختيارية)
@@ -93,12 +112,43 @@ else:
         if col2.button("🗑️", key=f"del_{f[0]}"):
             delete_file(f[0], st.session_state.user_email)
             st.rerun()
+    
+    st.sidebar.divider()
+    with st.sidebar.expander("⚙️ إدارة الحساب"):
+        if st.button("🗑️ حذف حسابي"):
+            if delete_my_account(st.session_state.user_email):
+                st.success("تم الحذف.")
+                logout_user()
+            else:
+                st.error("حدث خطأ.")
+
+# زر سياسة الخصوصية في القائمة الجانبية
+st.sidebar.divider()
+if st.sidebar.button("📜 سياسة الخصوصية"):
+    st.session_state.show_privacy = True
+    st.rerun()
+
+# عرض سياسة الخصوصية
+if st.session_state.show_privacy:
+    st.title("📜 سياسة الخصوصية")
+    st.markdown("""
+    - **لا نجمع بيانات شخصية (PII):** لا نطلب اسمك أو رقم هاتفك.
+    - **الكوكيز (Cookies):** نستخدم كوكيز تقني فقط لحفظ الجلسة أثناء استخدامك للتطبيق.
+    - **مدة الاحتفاظ:** يتم حذف البيانات والملفات المؤقتة تلقائياً بعد 30 يوماً.
+    - **حق المسح:** يمكنك حذف حسابك وبياناتك في أي وقت.
+    - **الذكاء الاصطناعي:** نرسل ملخص البيانات فقط (وليس الملف كاملاً) إلى OpenRouter لتوليد الإجابات.
+    """)
+    if st.button("العودة للتطبيق"):
+        st.session_state.show_privacy = False
+        st.rerun()
+    st.stop()
 
 # ==========================================
-# 4. الواجهة الرئيسية (متاحة للجميع فوراً)
+# 4. الواجهة الرئيسية (متاحة للجميع)
 # ==========================================
 st.title("💼 محلل البيانات الاحترافي (AI Data Analyst)")
-st.write("ارفع ملفك مباشرة، أو استخدم زر البيانات التجريبية للتجربة الفورية.")
+st.info("💡 ملاحظة: قد يستغرق بدء التطبيق 30 ثانية بعد فترات الخمول (Streamlit Cloud).")
+st.caption("الحد الأقصى لحجم الملف: 50 ميجابايت.")
 
 # زر البيانات التجريبية
 if st.button("📊 تجربة سريعة (بيانات تجريبية)"):
@@ -116,7 +166,13 @@ tab_upload, tab_dashboard, tab_ai = st.tabs(["1️⃣ رفع البيانات", 
 
 with tab_upload:
     uploaded_file = st.file_uploader("اختر ملف Excel أو CSV", type=["xlsx", "csv"])
+    
     if uploaded_file:
+        # التحقق من حجم الملف
+        if uploaded_file.size > 50 * 1024 * 1024:
+            st.error("🚫 الملف كبير جداً! الحد الأقصى هو 50 ميجابايت.")
+            st.stop()
+            
         with st.spinner("جارٍ تحليل الملف..."):
             try:
                 if uploaded_file.name.endswith('.csv'):
@@ -129,7 +185,7 @@ with tab_upload:
                     save_file(st.session_state.user_email, uploaded_file.name, df)
                 st.success("✅ تم رفع الملف بنجاح! اذهب للتبويب الثاني.")
             except Exception as e:
-                st.error(f"خطأ: {e}")
+                st.error(f"خطأ في قراءة الملف: {e}")
 
 with tab_dashboard:
     if st.session_state.df is None:
