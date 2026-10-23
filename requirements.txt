@@ -12,4 +12,5 @@ google-auth
 sentry-sdk
 polars
 sqlalchemy
+
 psycopg2-binary
