@@ -4,12 +4,26 @@ import plotly.express as px
 import io
 import json
 import time
+import sentry_sdk
 from database import init_db, save_file, get_files, delete_file, get_db_connection
 from auth import create_user, verify_user, login_user, logout_user
 from ai_engine import ask_ai_about_data
 
+# ==========================================
+# 1. إعدادات الصفحة والمراقبة (Sentry)
+# ==========================================
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
+# تهيئة Sentry لمراقبة الأخطاء
+try:
+    sentry_sdk.init(
+        dsn=st.secrets.get("SENTRY_DSN", ""),
+        traces_sample_rate=1.0,
+    )
+except Exception:
+    pass
+
+# تصميم CSS
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; }
@@ -20,6 +34,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# ==========================================
+# 2. تهيئة الجلسة وقاعدة البيانات
+# ==========================================
 if 'db_initialized' not in st.session_state:
     init_db()
     st.session_state.db_initialized = True
@@ -30,15 +47,30 @@ if 'user_role' not in st.session_state: st.session_state.user_role = None
 if 'df' not in st.session_state: st.session_state.df = None
 if 'show_privacy' not in st.session_state: st.session_state.show_privacy = False
 
+# دالة حذف الحساب (GDPR)
+def delete_my_account(email):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM user_files WHERE user_email = %s", (email,))
+        cur.execute("DELETE FROM users WHERE email = %s", (email,))
+        conn.commit()
+        return True
+    except:
+        return False
+    finally:
+        cur.close()
+        conn.close()
+
 # ==========================================
-# شاشة تسجيل الدخول
+# 3. شاشة تسجيل الدخول
 # ==========================================
 if not st.session_state.logged_in:
     st.title("🔐 مرحباً بك في منصة تحليل البيانات")
     
     if st.session_state.show_privacy:
         st.subheader("📜 سياسة الخصوصية")
-        st.write("نحن نحترم خصوصيتك. يتم تشفير كلمات المرور. لا نشارك بياناتك.")
+        st.write("نحن نحترم خصوصيتك. يتم تشفير كلمات المرور الخاصة بك. لا نشارك بياناتك مع أي طرف ثالث. يمكنك حذف حسابك وبياناتك في أي وقت.")
         if st.button("العودة"):
             st.session_state.show_privacy = False
             st.rerun()
@@ -90,10 +122,11 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==========================================
-# التطبيق الرئيسي (بعد الدخول)
+# 4. القائمة الجانبية (Sidebar)
 # ==========================================
 st.sidebar.write(f"👤 {st.session_state.user_email}")
 
+# زر لوحة المدير
 if st.session_state.user_role == "admin":
     st.sidebar.page_link("pages/1_Admin_Panel.py", label="👑 لوحة المدير", icon="👑")
 
@@ -115,12 +148,22 @@ for f in files:
         delete_file(f[0], st.session_state.user_email)
         st.rerun()
 
+# إدارة الحساب (GDPR)
 st.sidebar.divider()
+with st.sidebar.expander("⚙️ إدارة الحساب"):
+    st.write("سيتم حذف جميع بياناتك وملفاتك نهائياً.")
+    if st.button("🗑️ حذف حسابي"):
+        if delete_my_account(st.session_state.user_email):
+            st.success("تم حذف الحساب بنجاح.")
+            logout_user()
+        else:
+            st.error("حدث خطأ أثناء الحذف.")
+
 if st.sidebar.button("تسجيل الخروج"):
     logout_user()
 
 # ==========================================
-# الواجهة السهلة (Tabs)
+# 5. الواجهة الرئيسية (Tabs)
 # ==========================================
 st.title("💼 منصة تحليل البيانات")
 st.write("قم برفع ملفك أو استخدم ميزات التحليل أدناه.")
