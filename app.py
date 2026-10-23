@@ -10,6 +10,7 @@ import gspread
 import extra_streamlit_components as stx
 from google.oauth2.service_account import Credentials
 from sqlalchemy import create_engine
+from prophet import Prophet
 from database import init_db, save_file, get_files, delete_file, get_db_connection
 from auth import create_user, verify_user, login_user, logout_user
 from ai_engine import ask_ai_about_data, generate_sql_from_question
@@ -43,7 +44,6 @@ st.markdown("""
 # ==========================================
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
-# إنشاء أو جلب معرّف المستخدم المجهول (UUID)
 if 'anon_uuid' not in st.session_state:
     saved_uuid = cookie_manager.get(cookie="anon_uuid")
     if saved_uuid:
@@ -53,7 +53,6 @@ if 'anon_uuid' not in st.session_state:
         cookie_manager.set("anon_uuid", new_uuid)
         st.session_state.anon_uuid = new_uuid
 
-# تحديد هوية المستخدم الحالي (مسجل أو مجهول)
 current_user = st.session_state.user_email if st.session_state.get('logged_in') else st.session_state.anon_uuid
 
 # ==========================================
@@ -105,7 +104,7 @@ if 'show_privacy' not in st.session_state: st.session_state.show_privacy = False
 st.sidebar.title("الملف الشخصي")
 
 if not st.session_state.logged_in:
-    st.sidebar.info("أنت تستخدم التطبيق كزائر. عملك محفوظ تلقائياً على هذا الجهاز.")
+    st.sidebar.info("أنت تستخدم التطبيق كزائر. عملك محفوظ تلقائياً.")
     with st.sidebar.expander("🔑 تسجيل الدخول (اختياري)"):
         login_email = st.text_input("البريد", key="l_email")
         login_pass = st.text_input("كلمة المرور", type="password", key="l_pass")
@@ -125,10 +124,8 @@ else:
 
 st.sidebar.divider()
 st.sidebar.subheader("🗂️ عملك السابق")
-# جلب الملفات بناءً على الهوية (سواء UUID أو بريد)
 files = get_files(current_user)
-if not files:
-    st.sidebar.caption("لا توجد ملفات محفوظة بعد.")
+if not files: st.sidebar.caption("لا توجد ملفات محفوظة.")
 for f in files:
     col1, col2 = st.sidebar.columns([4, 1])
     if col1.button(f"{f[1]}", key=f"load_{f[0]}"):
@@ -142,7 +139,7 @@ if st.sidebar.button("📜 سياسة الخصوصية"): st.session_state.show_
 
 if st.session_state.show_privacy:
     st.title("📜 سياسة الخصوصية")
-    st.markdown("- **لا PII:** لا نطلب اسمك.\n- **كوكيز:** نستخدم UUID مجهول لحفظ عملك.\n- **حذف البيانات:** يمكنك حذف ملفاتك من القائمة.")
+    st.markdown("- **لا PII:** لا نطلب اسمك.\n- **كوكيز:** UUID مجهول لحفظ عملك.\n- **حذف البيانات:** من القائمة.")
     if st.button("العودة"): st.session_state.show_privacy = False; st.rerun()
     st.stop()
 
@@ -153,22 +150,18 @@ st.title("🏭 محلل بيانات المصانع (OEE & AI)")
 
 if st.button("📊 تجربة سريعة"):
     demo_data = {
-        'Machine': ['Line 1', 'Line 2', 'Line 1', 'Line 3', 'Line 2', 'Line 1'],
-        'Planned_Time_Mins': [480, 480, 480, 480, 480, 480],
-        'Downtime_Mins': [30, 10, 120, 60, 15, 45],
-        'Ideal_Cycle_Time_Sec': [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-        'Total_Count': [1500, 2500, 1200, 6000, 2200, 1400],
-        'Good_Count': [1450, 2480, 1100, 5700, 2190, 1320],
-        'Downtime_Reason': ['Maintenance', 'Setup', 'Breakdown', 'Breakdown', 'Setup', 'Material Shortage']
+        'Date': ['2026-01-01', '2026-02-01', '2026-03-01', '2026-04-01', '2026-05-01', '2026-06-01', '2026-07-01'],
+        'Sales': [1500, 2500, 1200, 6000, 2200, 1400, 5000],
+        'Machine': ['Line 1', 'Line 2', 'Line 1', 'Line 3', 'Line 2', 'Line 1', 'Line 3']
     }
     df = pl.from_pandas(pd.DataFrame(demo_data))
     st.session_state.df = df
-    save_file(current_user, "Demo_Data", df.to_pandas()) # حفظ تلقائي
+    save_file(current_user, "Demo_Data", df.to_pandas())
     st.rerun()
 
 st.divider()
 
-tab_upload, tab_dashboard, tab_oee, tab_ai, tab_sql = st.tabs(["1️⃣ رفع البيانات", "2️⃣ لوحة التحكم", "3️⃣ OEE", "4️⃣ المساعد الذكي", "5️⃣ اسأل SQL"])
+tab_upload, tab_dashboard, tab_oee, tab_forecast, tab_ai, tab_sql = st.tabs(["1️⃣ رفع البيانات", "2️⃣ لوحة التحكم", "3️⃣ OEE", "4️⃣ التنبؤ بالمستقبل", "5️⃣ المساعد الذكي", "6️⃣ اسأل SQL"])
 
 with tab_upload:
     option = st.radio("اختر طريقة الرفع:", ["رفع ملف", "Google Sheets", "قاعدة بيانات SQL"])
@@ -182,10 +175,7 @@ with tab_upload:
                     df = pl.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pl.read_excel(uploaded_file)
                     df = df.drop_nulls().unique()
                     st.session_state.df = df
-                    
-                    # الحفظ التلقائي للمجهول
                     save_file(current_user, uploaded_file.name, df.head(5000).to_pandas() if df.height > 5000 else df.to_pandas())
-                    
                     st.success(f"✅ تم الرفع! ({df.height:,} صف)")
                 except Exception as e: st.error(f"❌ خطأ: {e}")
 
@@ -261,6 +251,46 @@ with tab_oee:
         else:
             st.warning("⚠️ لبيانات OEE، يجب أن يحتوي ملفك على:")
             st.code(", ".join(required_cols))
+
+with tab_forecast:
+    st.subheader("🔮 التنبؤ بالمستقبل (Forecasting)")
+    if st.session_state.df is None: st.info("⚠️ ارفع البيانات أولاً.")
+    else:
+        df = st.session_state.df.to_pandas()
+        date_cols = [c for c in df.columns if 'date' in c.lower() or 'time' in c.lower() or 'شهر' in c or 'تاريخ' in c]
+        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+        
+        if not date_cols or not numeric_cols:
+            st.warning("⚠️ تحتاج إلى عمود للتاريخ وعمود رقمي للتنبؤ.")
+        else:
+            col1, col2 = st.columns(2)
+            date_col = col1.selectbox("اختر عمود التاريخ:", date_cols)
+            value_col = col2.selectbox("اختر عمود القيمة (للتنبؤ):", numeric_cols)
+            
+            periods = st.slider("عدد الفترات المستقبلية للتنبؤ:", 1, 12, 3)
+            
+            if st.button("توليد التنبؤ"):
+                with st.spinner("جارٍ تحليل البيانات وتوليد التنبؤ..."):
+                    try:
+                        # تجهيز البيانات لـ Prophet
+                        prophet_df = df[[date_col, value_col]].copy()
+                        prophet_df.columns = ['ds', 'y']
+                        prophet_df['ds'] = pd.to_datetime(prophet_df['ds'])
+                        prophet_df = prophet_df.groupby('ds').sum().reset_index()
+                        
+                        m = Prophet()
+                        m.fit(prophet_df)
+                        
+                        future = m.make_future_dataframe(periods=periods, freq='M')
+                        forecast = m.predict(future)
+                        
+                        fig = m.plot(forecast)
+                        st.success("✅ تم توليد التنبؤ بنجاح!")
+                        st.pyplot(fig)
+                        st.write("**البيانات المتوقعة:**")
+                        st.dataframe(forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(periods))
+                    except Exception as e:
+                        st.error(f"❌ حدث خطأ: {e}")
 
 with tab_ai:
     if st.session_state.df is None: st.info("⚠️ ارفع البيانات أولاً.")
