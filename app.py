@@ -10,97 +10,28 @@ from auth import create_user, verify_user, login_user, logout_user
 from ai_engine import ask_ai_about_data
 
 # ==========================================
-# 1. إعدادات الصفحة والمراقبة (Sentry)
+# 1. إعدادات الصفحة والمراقبة
 # ==========================================
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
-# تهيئة Sentry لمراقبة الأخطاء
+# تهيئة Sentry
 try:
-    sentry_sdk.init(
-        dsn=st.secrets.get("SENTRY_DSN", ""),
-        traces_sample_rate=1.0,
-    )
+    sentry_sdk.init(dsn=st.secrets.get("SENTRY_DSN", ""), traces_sample_rate=1.0)
 except Exception:
     pass
 
-# تصميم CSS (واجهة حديثة مثل إنستغرام)
+# تصميم مريح للعين (Dark Mode)
 st.markdown("""
     <style>
-    /* إخفاء شريط Streamlit العلوي */
+    .stApp { background-color: #0e1117; color: #ffffff; }
+    div[data-testid="stMetric"] { background-color: #1e2130; padding: 15px; border-radius: 10px; border: 1px solid #3e4257; }
+    .stButton > button { border-radius: 8px; font-weight: bold; background-color: #4CAF50; color: white; }
+    .stTabs [data-baseweb="tab-list"] { gap: 20px; }
+    .stTabs [data-baseweb="tab"] { padding: 10px 20px; border-radius: 10px; color: #ffffff; }
+    .stTabs [aria-selected="true"] { background-color: #1e2130; }
     header {visibility: hidden;}
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    
-    /* الخلفية العامة */
-    .stApp { 
-        background-color: #fafafa; 
-        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-    }
-    
-    /* البطاقات (Cards) */
-    div[data-testid="stMetric"] { 
-        background-color: #ffffff; 
-        padding: 20px; 
-        border-radius: 16px; 
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        border: 1px solid #dbdbdb;
-    }
-    
-    /* الأزرار */
-    .stButton > button {
-        background-color: #0095f6; 
-        color: white;
-        border-radius: 12px;
-        border: none;
-        padding: 10px 24px;
-        font-weight: 600;
-        transition: 0.3s;
-    }
-    .stButton > button:hover {
-        background-color: #007bb5;
-        transform: scale(1.02);
-    }
-    
-    /* مربعات الإدخال */
-    .stTextInput > div > div > input {
-        border-radius: 12px;
-        border: 1px solid #dbdbdb;
-        padding: 12px;
-        background-color: #fafafa;
-    }
-    
-    /* التبويبات (Tabs) */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 24px;
-        background-color: white;
-        padding: 10px;
-        border-radius: 16px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 8px;
-        padding: 10px 20px;
-        font-weight: 600;
-        color: #8e8e8e;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #0095f6;
-        color: white !important;
-    }
-    
-    /* القائمة الجانبية */
-    [data-testid="stSidebar"] {
-        background-color: #ffffff;
-        border-right: 1px solid #dbdbdb;
-    }
-    
-    /* الرسوم البيانية */
-    .stPlotlyChart {
-        background-color: white;
-        border-radius: 16px;
-        padding: 15px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -117,7 +48,6 @@ if 'user_role' not in st.session_state: st.session_state.user_role = None
 if 'df' not in st.session_state: st.session_state.df = None
 if 'show_privacy' not in st.session_state: st.session_state.show_privacy = False
 
-# دالة حذف الحساب (GDPR)
 def delete_my_account(email):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -140,7 +70,7 @@ if not st.session_state.logged_in:
     
     if st.session_state.show_privacy:
         st.subheader("📜 سياسة الخصوصية")
-        st.write("نحن نحترم خصوصيتك. يتم تشفير كلمات المرور الخاصة بك. لا نشارك بياناتك مع أي طرف ثالث. يمكنك حذف حسابك وبياناتك في أي وقت.")
+        st.write("نحن نحترم خصوصيتك. يتم تشفير كلمات المرور. لا نشارك بياناتك مع أي طرف ثالث. يمكنك حذف حسابك في أي وقت.")
         if st.button("العودة"):
             st.session_state.show_privacy = False
             st.rerun()
@@ -192,7 +122,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # ==========================================
-# 4. القائمة الجانبية (Sidebar)
+# 4. القائمة الجانبية
 # ==========================================
 st.sidebar.write(f"👤 {st.session_state.user_email}")
 
