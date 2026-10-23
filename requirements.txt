@@ -9,3 +9,4 @@ tenacity
 openpyxl
 gspread
 google-auth
+sentry-sdk
