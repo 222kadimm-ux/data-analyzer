@@ -160,12 +160,12 @@ if st.sidebar.button("تسجيل الخروج"):
     logout_user()
 
 # ==========================================
-# 5. الواجهة الرئيسية (Tabs)
+# 5. الواجهة الرئيسية
 # ==========================================
-st.title("💼 منصة تحليل البيانات")
-st.write("قم برفع ملفك أو استخدم ميزات التحليل أدناه.")
+st.title("💼 محلل البيانات الاحترافي (AI Data Analyst)")
+st.write("قم برفع ملفك للحصول على تحليل إحصائي متقدم وتقارير ذكية.")
 
-tab_upload, tab_dashboard, tab_ai = st.tabs(["1️⃣ رفع البيانات", "2️⃣ لوحة التحكم", "3️⃣ المساعد الذكي"])
+tab_upload, tab_dashboard, tab_ai = st.tabs(["1️⃣ رفع البيانات", "2️⃣ لوحة التحكم الإحصائية", "3️⃣ المساعد الذكي (AI)"])
 
 with tab_upload:
     st.subheader("📂 ارفع ملفك هنا")
@@ -194,22 +194,31 @@ with tab_dashboard:
         cat_cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
         
         if numeric_cols and cat_cols:
-            st.subheader("📊 الإحصائيات")
-            c1, c2, c3 = st.columns(3)
+            st.subheader("📊 الإحصائيات الأساسية")
+            c1, c2, c3, c4 = st.columns(4)
             c1.metric("إجمالي العمليات", len(df))
             c2.metric(f"الإجمالي ({numeric_cols[0]})", f"{df[numeric_cols[0]].sum():,.0f}")
             best_item = df.groupby(cat_cols[0])[numeric_cols[0]].sum().idxmax()
             c3.metric("أفضل منتج", best_item)
-            
+            c4.metric("متوسط القيمة", f"{df[numeric_cols[0]].mean():,.1f}")
+
             st.divider()
-            st.subheader("📈 الرسوم البيانية")
-            chart_data = df.groupby(cat_cols[0])[numeric_cols[0]].sum().reset_index()
-            c1, c2 = st.columns(2)
-            with c1:
+            
+            col_left, col_right = st.columns(2)
+            with col_left:
+                st.subheader("📈 توزيع الفئات")
+                chart_data = df.groupby(cat_cols[0])[numeric_cols[0]].sum().reset_index()
                 st.plotly_chart(px.bar(chart_data, x=cat_cols[0], y=numeric_cols[0], color=numeric_cols[0]), use_container_width=True)
-            with c2:
-                st.plotly_chart(px.pie(chart_data, names=cat_cols[0], values=numeric_cols[0]), use_container_width=True)
-                
+            
+            with col_right:
+                st.subheader("🔗 مصفوفة الارتباطات")
+                if len(numeric_cols) > 1:
+                    corr = df[numeric_cols].corr()
+                    fig = px.imshow(corr, text_auto=True, aspect="auto", color_continuous_scale='RdBu')
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("تحتاج إلى عمودين رقميين على الأقل.")
+            
             st.divider()
             st.subheader("📥 تصدير النتائج")
             c1, c2 = st.columns(2)
@@ -219,19 +228,26 @@ with tab_dashboard:
                 df.to_excel(writer, index=False)
             c2.download_button("تحميل كـ Excel", excel_buffer.getvalue(), "data.xlsx")
         else:
-            st.warning("البيانات لا تحتوي على أعمدة رقمية ونصية كافية للتحليل.")
+            st.warning("البيانات لا تحتوي على أعمدة رقمية ونصية كافية.")
 
 with tab_ai:
     if st.session_state.df is None:
         st.info("⚠️ لا توجد بيانات. يرجى رفع ملف أولاً من التبويب الأول.")
     else:
-        st.subheader("💬 تحدث مع بياناتك")
-        st.write("اسأل المساعد الذكي أي سؤال حول ملفك (مثلاً: 'ما هو أفضل منتج؟').")
+        st.subheader("💬 المساعد الذكي (AI Analyst)")
+        st.write("اطلب تقريراً كاملاً أو اسأل عن بياناتك.")
         
-        question = st.text_input("سؤالك:")
-        if st.button("اسأل الذكاء الاصطناعي"):
+        if st.button("📝 توليد تقرير تحليلي تلقائي"):
+            with st.spinner("الذكاء الاصطناعي يحلل البيانات ويكتب التقرير..."):
+                report = ask_ai_about_data("أعطني تقريراً تحليلياً شاملاً عن هذه البيانات، واذكر أهم 3 توصيات.", st.session_state.df)
+                st.info(report)
+        
+        st.divider()
+        
+        question = st.text_input("اسأل سؤالاً محدداً (مثلاً: ما هو المنتج الأكثر ربحية؟):")
+        if st.button("إرسال السؤال"):
             if question:
-                with st.spinner("جاري التفكير..."):
+                with st.spinner("جاري التحليل..."):
                     answer = ask_ai_about_data(question, st.session_state.df)
                     st.success(answer)
             else:
