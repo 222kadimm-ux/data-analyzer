@@ -1,21 +1,51 @@
 import streamlit as st
 import requests
+import pandas as pd
 
 def ask_ai_about_data(user_question, df):
     api_key = st.secrets.get("OPENROUTER_API_KEY")
     if not api_key:
-        return "⚠️ مفتاح OpenRouter API غير موجود."
+        return "⚠️ مفتاح API غير موجود."
 
-    summary = df.describe(include='all').to_string()
+    # استخراج إحصائيات متقدمة
+    try:
+        numeric_df = df.select_dtypes(include=['number'])
+        stats = numeric_df.describe().to_string()
+        correlations = numeric_df.corr().to_string()
+    except:
+        stats = "لا توجد أعمدة رقمية كافية."
+        correlations = "لا توجد ارتباطات."
+
     columns = df.columns.tolist()
+    missing = df.isnull().sum().to_string()
     
-    prompt = f"أنت محلل بيانات. الأعمدة: {columns}. الملخص: {summary}. السؤال: {user_question}. أجب بالعربية."
+    prompt = f"""
+    أنت محلل بيانات خبير (Senior Data Analyst). 
+    لديك مجموعة بيانات بالأعمدة التالية: {columns}
+    
+    الإحصائيات الوصفية (Mean, Std, Min, Max):
+    {stats}
+    
+    مصفوفة الارتباطات (Correlations):
+    {correlations}
+    
+    القيم المفقودة:
+    {missing}
+    
+    سؤال المستخدم: "{user_question}"
+    
+    المطلوب:
+    1. أجب على السؤال بدقة بناءً على الأرقام أعلاه.
+    2. إذا كان السؤال عاماً، قدم تحليلاً شاملاً: ما هو أفضل منتج؟ ما هي العلاقات بين الأعمدة؟ هل هناك قيم متطرفة؟
+    3. اكتب الإجابة بلغة عربية احترافية ومنظمة (استخدم نقاط واضحة).
+    """
 
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     data = {
         "model": "openrouter/free",
-        "messages": [{"role": "user", "content": prompt}]
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.2
     }
 
     try:
