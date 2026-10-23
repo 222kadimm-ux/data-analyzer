@@ -4,9 +4,10 @@ import polars as pl
 import plotly.express as px
 import io
 import json
-import time
+import uuid
 import sentry_sdk
 import gspread
+import extra_streamlit_components as stx
 from google.oauth2.service_account import Credentials
 from sqlalchemy import create_engine
 from database import init_db, save_file, get_files, delete_file, get_db_connection
@@ -38,7 +39,25 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. الدوال المساعدة
+# 2. إدارة الكوكيز (الحفظ التلقائي)
+# ==========================================
+cookie_manager = stx.CookieManager(key="cookie_manager")
+
+# إنشاء أو جلب معرّف المستخدم المجهول (UUID)
+if 'anon_uuid' not in st.session_state:
+    saved_uuid = cookie_manager.get(cookie="anon_uuid")
+    if saved_uuid:
+        st.session_state.anon_uuid = saved_uuid
+    else:
+        new_uuid = str(uuid.uuid4())
+        cookie_manager.set("anon_uuid", new_uuid)
+        st.session_state.anon_uuid = new_uuid
+
+# تحديد هوية المستخدم الحالي (مسجل أو مجهول)
+current_user = st.session_state.user_email if st.session_state.get('logged_in') else st.session_state.anon_uuid
+
+# ==========================================
+# 3. الدوال المساعدة
 # ==========================================
 def load_from_gsheets(sheet_url):
     try:
@@ -69,7 +88,7 @@ def delete_my_account(email):
     finally: cur.close(); conn.close()
 
 # ==========================================
-# 3. تهيئة الجلسة
+# 4. تهيئة الجلسة
 # ==========================================
 if 'db_initialized' not in st.session_state:
     init_db()
@@ -81,60 +100,58 @@ if 'user_email' not in st.session_state: st.session_state.user_email = None
 if 'show_privacy' not in st.session_state: st.session_state.show_privacy = False
 
 # ==========================================
-# 4. القائمة الجانبية
+# 5. القائمة الجانبية
 # ==========================================
-st.sidebar.title("الملف الشخصي (اختياري)")
+st.sidebar.title("الملف الشخصي")
 
 if not st.session_state.logged_in:
-    with st.sidebar.expander("🔑 تسجيل الدخول"):
+    st.sidebar.info("أنت تستخدم التطبيق كزائر. عملك محفوظ تلقائياً على هذا الجهاز.")
+    with st.sidebar.expander("🔑 تسجيل الدخول (اختياري)"):
         login_email = st.text_input("البريد", key="l_email")
         login_pass = st.text_input("كلمة المرور", type="password", key="l_pass")
         if st.button("دخول"):
             if verify_user(login_email, login_pass):
                 login_user(login_email); st.rerun()
-            else:
-                st.error("بيانات خاطئة.")
+            else: st.error("بيانات خاطئة.")
         
         new_email = st.text_input("بريد جديد", key="n_email")
         new_pass = st.text_input("كلمة مرور جديدة", type="password", key="n_pass")
         if st.button("إنشاء حساب"):
-            if len(new_pass) < 6: st.warning("كلمة المرور قصيرة.")
-            elif create_user(new_email, new_pass): st.success("✅ تم!"); st.rerun()
-            else: st.error("مسجل مسبقاً.")
+            if len(new_pass) < 6: st.warning("قصيرة.")
+            elif create_user(new_email, new_pass): st.success("✅"); st.rerun()
 else:
     st.sidebar.write(f"👤 {st.session_state.user_email}")
     if st.sidebar.button("تسجيل الخروج"): logout_user()
-    st.sidebar.divider()
-    st.sidebar.subheader("🗂️ تقاريري")
-    for f in get_files(st.session_state.user_email):
-        col1, col2 = st.sidebar.columns([4, 1])
-        if col1.button(f"{f[1]}", key=f"load_{f[0]}"):
-            data = json.loads(f[2]) if isinstance(f[2], str) else f[2]
-            st.session_state.df = pl.from_pandas(pd.DataFrame(data)); st.rerun()
-        if col2.button("🗑️", key=f"del_{f[0]}"):
-            delete_file(f[0], st.session_state.user_email); st.rerun()
-    
-    with st.sidebar.expander("⚙️ إدارة الحساب"):
-        if st.button("🗑️ حذف حسابي"):
-            if delete_my_account(st.session_state.user_email):
-                st.success("تم الحذف."); logout_user()
+
+st.sidebar.divider()
+st.sidebar.subheader("🗂️ عملك السابق")
+# جلب الملفات بناءً على الهوية (سواء UUID أو بريد)
+files = get_files(current_user)
+if not files:
+    st.sidebar.caption("لا توجد ملفات محفوظة بعد.")
+for f in files:
+    col1, col2 = st.sidebar.columns([4, 1])
+    if col1.button(f"{f[1]}", key=f"load_{f[0]}"):
+        data = json.loads(f[2]) if isinstance(f[2], str) else f[2]
+        st.session_state.df = pl.from_pandas(pd.DataFrame(data)); st.rerun()
+    if col2.button("🗑️", key=f"del_{f[0]}"):
+        delete_file(f[0], current_user); st.rerun()
 
 st.sidebar.divider()
 if st.sidebar.button("📜 سياسة الخصوصية"): st.session_state.show_privacy = True; st.rerun()
 
 if st.session_state.show_privacy:
     st.title("📜 سياسة الخصوصية")
-    st.markdown("- **لا PII:** لا نطلب اسمك.\n- **كوكيز تقنية:** لحفظ الجلسة فقط.\n- **حذف البيانات:** بعد 30 يوماً أو عند طلبك.\n- **AI:** نرسل ملخص البيانات فقط.")
+    st.markdown("- **لا PII:** لا نطلب اسمك.\n- **كوكيز:** نستخدم UUID مجهول لحفظ عملك.\n- **حذف البيانات:** يمكنك حذف ملفاتك من القائمة.")
     if st.button("العودة"): st.session_state.show_privacy = False; st.rerun()
     st.stop()
 
 # ==========================================
-# 5. الواجهة الرئيسية
+# 6. الواجهة الرئيسية
 # ==========================================
 st.title("🏭 محلل بيانات المصانع (OEE & AI)")
-st.write("ارفع ملفك، أو اتصل بقاعدة بيانات مصنعك، للحصول على تقارير ذكية.")
 
-if st.button("📊 تجربة سريعة (بيانات تصنيع)"):
+if st.button("📊 تجربة سريعة"):
     demo_data = {
         'Machine': ['Line 1', 'Line 2', 'Line 1', 'Line 3', 'Line 2', 'Line 1'],
         'Planned_Time_Mins': [480, 480, 480, 480, 480, 480],
@@ -144,7 +161,9 @@ if st.button("📊 تجربة سريعة (بيانات تصنيع)"):
         'Good_Count': [1450, 2480, 1100, 5700, 2190, 1320],
         'Downtime_Reason': ['Maintenance', 'Setup', 'Breakdown', 'Breakdown', 'Setup', 'Material Shortage']
     }
-    st.session_state.df = pl.from_pandas(pd.DataFrame(demo_data))
+    df = pl.from_pandas(pd.DataFrame(demo_data))
+    st.session_state.df = df
+    save_file(current_user, "Demo_Data", df.to_pandas()) # حفظ تلقائي
     st.rerun()
 
 st.divider()
@@ -161,7 +180,12 @@ with tab_upload:
             with st.spinner("جارٍ التحليل..."):
                 try:
                     df = pl.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pl.read_excel(uploaded_file)
-                    st.session_state.df = df.drop_nulls().unique()
+                    df = df.drop_nulls().unique()
+                    st.session_state.df = df
+                    
+                    # الحفظ التلقائي للمجهول
+                    save_file(current_user, uploaded_file.name, df.head(5000).to_pandas() if df.height > 5000 else df.to_pandas())
+                    
                     st.success(f"✅ تم الرفع! ({df.height:,} صف)")
                 except Exception as e: st.error(f"❌ خطأ: {e}")
 
@@ -170,7 +194,10 @@ with tab_upload:
         if st.button("سحب"):
             if gs_url:
                 df = load_from_gsheets(gs_url)
-                if df is not None: st.session_state.df = df; st.success("✅ تم!")
+                if df is not None: 
+                    st.session_state.df = df
+                    save_file(current_user, "Google_Sheets_Data", df.head(5000).to_pandas())
+                    st.success("✅ تم!")
                 else: st.error("❌ فشل الاتصال.")
 
     elif option == "قاعدة بيانات SQL":
@@ -180,7 +207,10 @@ with tab_upload:
             if db_url and table_name:
                 with st.spinner("جارٍ السحب..."):
                     df = load_from_sql(db_url, table_name)
-                    if df is not None: st.session_state.df = df; st.success("✅ تم!")
+                    if df is not None: 
+                        st.session_state.df = df
+                        save_file(current_user, "SQL_Data", df.to_pandas())
+                        st.success("✅ تم!")
                     else: st.error("❌ فشل الاتصال.")
 
 with tab_dashboard:
@@ -192,13 +222,11 @@ with tab_dashboard:
         cat_cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
         
         if numeric_cols and cat_cols:
-            st.subheader("📊 إحصائيات عامة")
             c1, c2, c3 = st.columns(3)
-            c1.metric("إجمالي السجلات", f"{df_pl.height:,}")
-            c2.metric(f"الإجمالي ({numeric_cols[0]})", f"{df_pl[numeric_cols[0]].sum():,.0f}")
+            c1.metric("السجلات", f"{df_pl.height:,}")
+            c2.metric("الإجمالي", f"{df_pl[numeric_cols[0]].sum():,.0f}")
             best_item = df_pl.group_by(cat_cols[0]).agg(pl.col(numeric_cols[0]).sum()).sort(numeric_cols[0], descending=True).head(1)[cat_cols[0]][0]
             c3.metric("الأعلى", str(best_item))
-            
             st.plotly_chart(px.bar(df.groupby(cat_cols[0])[numeric_cols[0]].sum().reset_index(), x=cat_cols[0], y=numeric_cols[0], color=numeric_cols[0]), use_container_width=True)
 
             st.divider()
@@ -215,8 +243,6 @@ with tab_oee:
         required_cols = ['Planned_Time_Mins', 'Downtime_Mins', 'Ideal_Cycle_Time_Sec', 'Total_Count', 'Good_Count']
         
         if all(col in df.columns for col in required_cols):
-            st.subheader("🏭 حساب OEE (الفعالية الكلية للمعدات)")
-            
             df['Run_Time_Mins'] = df['Planned_Time_Mins'] - df['Downtime_Mins']
             df['Availability'] = df['Run_Time_Mins'] / df['Planned_Time_Mins']
             df['Ideal_Time_Mins'] = (df['Total_Count'] * df['Ideal_Cycle_Time_Sec']) / 60
@@ -230,11 +256,8 @@ with tab_oee:
             c3.metric("الجودة", f"{df['Quality'].mean()*100:.1f}%")
             c4.metric("OEE الإجمالي", f"{df['OEE'].mean()*100:.1f}%")
             
-            st.divider()
             if 'Downtime_Reason' in df.columns:
-                st.subheader("📉 تحليل باريتو (أسباب التوقف)")
-                pareto_data = df.groupby('Downtime_Reason')['Downtime_Mins'].sum().reset_index().sort_values(by='Downtime_Mins', ascending=False)
-                st.plotly_chart(px.bar(pareto_data, x='Downtime_Reason', y='Downtime_Mins', color='Downtime_Mins'), use_container_width=True)
+                st.plotly_chart(px.bar(df.groupby('Downtime_Reason')['Downtime_Mins'].sum().reset_index().sort_values('Downtime_Mins', ascending=False), x='Downtime_Reason', y='Downtime_Mins', color='Downtime_Mins'), use_container_width=True)
         else:
             st.warning("⚠️ لبيانات OEE، يجب أن يحتوي ملفك على:")
             st.code(", ".join(required_cols))
@@ -242,22 +265,17 @@ with tab_oee:
 with tab_ai:
     if st.session_state.df is None: st.info("⚠️ ارفع البيانات أولاً.")
     else:
-        st.subheader("💬 المساعد الذكي (AI)")
         if st.button("📝 تقرير تلقائي"):
             with st.spinner("جاري التحليل..."):
                 st.info(ask_ai_about_data("أعطني تقريراً تحليلياً شاملاً وأهم 3 توصيات.", st.session_state.df))
         
-        st.divider()
         question = st.text_input("اسأل:")
         if st.button("إرسال"):
             if question: st.success(ask_ai_about_data(question, st.session_state.df))
 
 with tab_sql:
-    st.subheader("🗣️ اسأل قواعد بيانات المصنع بالعربية (AI to SQL)")
-    st.write("اكتب سؤالك بالعربية، وسيقوم الذكاء الاصطناعي بتحويله إلى استعلام SQL وتنفيذه.")
-    
     sql_db_url = st.text_input("1. رابط قاعدة البيانات (postgresql://...)", type="password", key="sql_db")
-    sql_table = st.text_input("2. اسم الجدول (مثلاً: production_data)", key="sql_table")
+    sql_table = st.text_input("2. اسم الجدول:", key="sql_table")
     sql_question = st.text_input("3. سؤالك (مثلاً: كم عدد المنتجات المعيبة؟)", key="sql_q")
     
     if st.button("توليد وتنفيذ الاستعلام"):
@@ -265,18 +283,15 @@ with tab_sql:
             with st.spinner("الذكاء الاصطناعي يكتب الاستعلام..."):
                 generated_sql, error = generate_sql_from_question(sql_question, sql_table)
                 
-                if error:
-                    st.error(f"حدث خطأ: {error}")
+                if error: st.error(f"حدث خطأ: {error}")
                 else:
                     st.code(generated_sql, language="sql")
-                    st.write("--- جاري تنفيذ الاستعلام ---")
-                    
                     try:
                         engine = create_engine(sql_db_url)
                         result_df = pd.read_sql(generated_sql, engine)
-                        st.success(f"✅ تم تنفيذ الاستعلام بنجاح! ({len(result_df)} نتيجة)")
+                        st.success(f"✅ تم التنفيذ! ({len(result_df)} نتيجة)")
                         st.dataframe(result_df)
                     except Exception as e:
-                        st.error(f"❌ فشل تنفيذ الاستعلام: {e}")
+                        st.error(f"❌ فشل التنفيذ: {e}")
         else:
             st.warning("يرجى ملء جميع الحقول.")
