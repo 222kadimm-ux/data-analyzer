@@ -11,7 +11,7 @@ from google.oauth2.service_account import Credentials
 from sqlalchemy import create_engine
 from database import init_db, save_file, get_files, delete_file, get_db_connection
 from auth import create_user, verify_user, login_user, logout_user
-from ai_engine import ask_ai_about_data
+from ai_engine import ask_ai_about_data, generate_sql_from_question
 
 # ==========================================
 # 1. إعدادات الصفحة والمراقبة
@@ -92,7 +92,8 @@ if not st.session_state.logged_in:
         if st.button("دخول"):
             if verify_user(login_email, login_pass):
                 login_user(login_email); st.rerun()
-            else: st.error("بيانات خاطئة.")
+            else:
+                st.error("بيانات خاطئة.")
         
         new_email = st.text_input("بريد جديد", key="n_email")
         new_pass = st.text_input("كلمة مرور جديدة", type="password", key="n_pass")
@@ -148,7 +149,7 @@ if st.button("📊 تجربة سريعة (بيانات تصنيع)"):
 
 st.divider()
 
-tab_upload, tab_dashboard, tab_oee, tab_ai = st.tabs(["1️⃣ رفع البيانات", "2️⃣ لوحة التحكم", "3️⃣ مؤشرات التصنيع (OEE)", "4️⃣ المساعد الذكي (AI)"])
+tab_upload, tab_dashboard, tab_oee, tab_ai, tab_sql = st.tabs(["1️⃣ رفع البيانات", "2️⃣ لوحة التحكم", "3️⃣ OEE", "4️⃣ المساعد الذكي", "5️⃣ اسأل SQL"])
 
 with tab_upload:
     option = st.radio("اختر طريقة الرفع:", ["رفع ملف", "Google Sheets", "قاعدة بيانات SQL"])
@@ -175,7 +176,7 @@ with tab_upload:
     elif option == "قاعدة بيانات SQL":
         db_url = st.text_input("رابط قاعدة البيانات (postgresql://...)", type="password")
         table_name = st.text_input("اسم الجدول:")
-        if st.button("سحب من SQL"):
+        if st.button("سحب"):
             if db_url and table_name:
                 with st.spinner("جارٍ السحب..."):
                     df = load_from_sql(db_url, table_name)
@@ -210,45 +211,33 @@ with tab_dashboard:
 with tab_oee:
     if st.session_state.df is None: st.info("⚠️ ارفع البيانات أولاً.")
     else:
-        df_pl = st.session_state.df
-        df = df_pl.to_pandas()
+        df = st.session_state.df.to_pandas()
+        required_cols = ['Planned_Time_Mins', 'Downtime_Mins', 'Ideal_Cycle_Time_Sec', 'Total_Count', 'Good_Count']
         
-        # التحقق من وجود الأعمدة المطلوبة لحساب OEE
-        required_oee_cols = ['Planned_Time_Mins', 'Downtime_Mins', 'Ideal_Cycle_Time_Sec', 'Total_Count', 'Good_Count']
-        
-        if all(col in df.columns for col in required_oee_cols):
+        if all(col in df.columns for col in required_cols):
             st.subheader("🏭 حساب OEE (الفعالية الكلية للمعدات)")
             
-            # الحسابات
             df['Run_Time_Mins'] = df['Planned_Time_Mins'] - df['Downtime_Mins']
             df['Availability'] = df['Run_Time_Mins'] / df['Planned_Time_Mins']
-            
             df['Ideal_Time_Mins'] = (df['Total_Count'] * df['Ideal_Cycle_Time_Sec']) / 60
             df['Performance'] = df['Ideal_Time_Mins'] / df['Run_Time_Mins']
-            
             df['Quality'] = df['Good_Count'] / df['Total_Count']
-            
             df['OEE'] = df['Availability'] * df['Performance'] * df['Quality']
             
-            # عرض النتائج
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("الإتاحة (Availability)", f"{df['Availability'].mean()*100:.1f}%")
-            c2.metric("الأداء (Performance)", f"{df['Performance'].mean()*100:.1f}%")
-            c3.metric("الجودة (Quality)", f"{df['Quality'].mean()*100:.1f}%")
-            c4.metric("OEE الإجمالي", f"{df['OEE'].mean()*100:.1f}%", delta_color="normal")
+            c1.metric("الإتاحة", f"{df['Availability'].mean()*100:.1f}%")
+            c2.metric("الأداء", f"{df['Performance'].mean()*100:.1f}%")
+            c3.metric("الجودة", f"{df['Quality'].mean()*100:.1f}%")
+            c4.metric("OEE الإجمالي", f"{df['OEE'].mean()*100:.1f}%")
             
             st.divider()
-            st.subheader("📉 تحليل باريتو (أسباب التوقف)")
             if 'Downtime_Reason' in df.columns:
+                st.subheader("📉 تحليل باريتو (أسباب التوقف)")
                 pareto_data = df.groupby('Downtime_Reason')['Downtime_Mins'].sum().reset_index().sort_values(by='Downtime_Mins', ascending=False)
-                fig = px.bar(pareto_data, x='Downtime_Reason', y='Downtime_Mins', color='Downtime_Mins', title="أسباب التوقف (الأكثر تكراراً)")
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("أضف عمود 'Downtime_Reason' لتحليل أسباب التوقف.")
+                st.plotly_chart(px.bar(pareto_data, x='Downtime_Reason', y='Downtime_Mins', color='Downtime_Mins'), use_container_width=True)
         else:
-            st.warning("⚠️ لبيانات OEE، يجب أن يحتوي ملفك على الأعمدة التالية:")
-            st.code(", ".join(required_oee_cols))
-            st.write("يمكنك استخدام زر 'تجربة سريعة' لرؤية كيف تعمل.")
+            st.warning("⚠️ لبيانات OEE، يجب أن يحتوي ملفك على:")
+            st.code(", ".join(required_cols))
 
 with tab_ai:
     if st.session_state.df is None: st.info("⚠️ ارفع البيانات أولاً.")
@@ -262,3 +251,32 @@ with tab_ai:
         question = st.text_input("اسأل:")
         if st.button("إرسال"):
             if question: st.success(ask_ai_about_data(question, st.session_state.df))
+
+with tab_sql:
+    st.subheader("🗣️ اسأل قواعد بيانات المصنع بالعربية (AI to SQL)")
+    st.write("اكتب سؤالك بالعربية، وسيقوم الذكاء الاصطناعي بتحويله إلى استعلام SQL وتنفيذه.")
+    
+    sql_db_url = st.text_input("1. رابط قاعدة البيانات (postgresql://...)", type="password", key="sql_db")
+    sql_table = st.text_input("2. اسم الجدول (مثلاً: production_data)", key="sql_table")
+    sql_question = st.text_input("3. سؤالك (مثلاً: كم عدد المنتجات المعيبة؟)", key="sql_q")
+    
+    if st.button("توليد وتنفيذ الاستعلام"):
+        if sql_db_url and sql_table and sql_question:
+            with st.spinner("الذكاء الاصطناعي يكتب الاستعلام..."):
+                generated_sql, error = generate_sql_from_question(sql_question, sql_table)
+                
+                if error:
+                    st.error(f"حدث خطأ: {error}")
+                else:
+                    st.code(generated_sql, language="sql")
+                    st.write("--- جاري تنفيذ الاستعلام ---")
+                    
+                    try:
+                        engine = create_engine(sql_db_url)
+                        result_df = pd.read_sql(generated_sql, engine)
+                        st.success(f"✅ تم تنفيذ الاستعلام بنجاح! ({len(result_df)} نتيجة)")
+                        st.dataframe(result_df)
+                    except Exception as e:
+                        st.error(f"❌ فشل تنفيذ الاستعلام: {e}")
+        else:
+            st.warning("يرجى ملء جميع الحقول.")
