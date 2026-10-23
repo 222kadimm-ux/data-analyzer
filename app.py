@@ -4,34 +4,31 @@ import plotly.express as px
 import io
 import json
 import time
-from database import init_db, save_file, get_files, delete_file
+from database import init_db, save_file, get_files, delete_file, get_db_connection
 from auth import create_user, verify_user, login_user, logout_user
 from ai_engine import ask_ai_about_data
 
-# إعدادات الصفحة
 st.set_page_config(page_title="Pro Data Analyzer", page_icon="💼", layout="wide")
 
-# تصميم CSS
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; }
     div[data-testid="stMetric"] { background-color: #1e2130; padding: 15px; border-radius: 10px; border: 1px solid #3e4257; }
-    .stButton > button { border-radius: 8px; font-weight: bold; width: 100%; }
+    .stButton > button { border-radius: 8px; font-weight: bold; }
     .stTabs [data-baseweb="tab-list"] { gap: 20px; }
     .stTabs [data-baseweb="tab"] { padding: 10px 20px; border-radius: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
-# تهيئة قاعدة البيانات
 if 'db_initialized' not in st.session_state:
     init_db()
     st.session_state.db_initialized = True
 
-# إدارة الحالة
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'user_email' not in st.session_state: st.session_state.user_email = None
 if 'user_role' not in st.session_state: st.session_state.user_role = None
 if 'df' not in st.session_state: st.session_state.df = None
+if 'show_privacy' not in st.session_state: st.session_state.show_privacy = False
 
 # ==========================================
 # شاشة تسجيل الدخول
@@ -39,46 +36,57 @@ if 'df' not in st.session_state: st.session_state.df = None
 if not st.session_state.logged_in:
     st.title("🔐 مرحباً بك في منصة تحليل البيانات")
     
-    tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
-    
-    with tab1:
-        if 'login_attempts' not in st.session_state: st.session_state.login_attempts = 0
-        if 'last_attempt_time' not in st.session_state: st.session_state.last_attempt_time = 0
+    if st.session_state.show_privacy:
+        st.subheader("📜 سياسة الخصوصية")
+        st.write("نحن نحترم خصوصيتك. يتم تشفير كلمات المرور. لا نشارك بياناتك.")
+        if st.button("العودة"):
+            st.session_state.show_privacy = False
+            st.rerun()
+    else:
+        tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب جديد"])
         
-        if st.session_state.login_attempts >= 5:
-            if time.time() - st.session_state.last_attempt_time < 60:
-                st.error("🚫 تم حظرك مؤقتاً. انتظر دقيقة.")
-                st.stop()
-            else:
-                st.session_state.login_attempts = 0
-                
-        login_email = st.text_input("البريد الإلكتروني", key="l_email")
-        login_pass = st.text_input("كلمة المرور", type="password", key="l_pass")
-        
-        if st.button("دخول"):
-            if verify_user(login_email, login_pass):
-                st.session_state.login_attempts = 0
-                login_user(login_email)
+        with tab1:
+            if 'login_attempts' not in st.session_state: st.session_state.login_attempts = 0
+            if 'last_attempt_time' not in st.session_state: st.session_state.last_attempt_time = 0
+            
+            if st.session_state.login_attempts >= 5:
+                if time.time() - st.session_state.last_attempt_time < 60:
+                    st.error("🚫 تم حظرك مؤقتاً. انتظر دقيقة.")
+                    st.stop()
+                else:
+                    st.session_state.login_attempts = 0
+                    
+            login_email = st.text_input("البريد الإلكتروني", key="l_email")
+            login_pass = st.text_input("كلمة المرور", type="password", key="l_pass")
+            
+            if st.button("دخول"):
+                if verify_user(login_email, login_pass):
+                    st.session_state.login_attempts = 0
+                    login_user(login_email)
+                    st.rerun()
+                else:
+                    st.session_state.login_attempts += 1
+                    st.session_state.last_attempt_time = time.time()
+                    st.error(f"بيانات خاطئة. المحاولة {st.session_state.login_attempts}/5")
+            
+            if st.button("سياسة الخصوصية"):
+                st.session_state.show_privacy = True
                 st.rerun()
-            else:
-                st.session_state.login_attempts += 1
-                st.session_state.last_attempt_time = time.time()
-                st.error(f"بيانات خاطئة. المحاولة {st.session_state.login_attempts}/5")
-                
-    with tab2:
-        new_email = st.text_input("البريد الإلكتروني الجديد", key="n_email")
-        new_pass = st.text_input("كلمة المرور (6 أحرف على الأقل)", type="password", key="n_pass")
-        captcha = st.number_input("أثبت أنك إنسان: 3 + 7 = ؟", min_value=0)
-        
-        if st.button("إنشاء الحساب"):
-            if len(new_pass) < 6:
-                st.warning("كلمة المرور قصيرة جداً.")
-            elif captcha != 10:
-                st.error("إجابة التحقق خاطئة.")
-            elif create_user(new_email, new_pass):
-                st.success("✅ تم إنشاء الحساب! يمكنك الدخول الآن.")
-            else:
-                st.error("البريد مسجل مسبقاً.")
+                    
+        with tab2:
+            new_email = st.text_input("البريد الإلكتروني الجديد", key="n_email")
+            new_pass = st.text_input("كلمة المرور (6 أحرف على الأقل)", type="password", key="n_pass")
+            captcha = st.number_input("أثبت أنك إنسان: 3 + 7 = ؟", min_value=0)
+            
+            if st.button("إنشاء الحساب"):
+                if len(new_pass) < 6:
+                    st.warning("كلمة المرور قصيرة جداً.")
+                elif captcha != 10:
+                    st.error("إجابة التحقق خاطئة.")
+                elif create_user(new_email, new_pass):
+                    st.success("✅ تم إنشاء الحساب! يمكنك الدخول الآن.")
+                else:
+                    st.error("البريد مسجل مسبقاً.")
     st.stop()
 
 # ==========================================
@@ -107,6 +115,7 @@ for f in files:
         delete_file(f[0], st.session_state.user_email)
         st.rerun()
 
+st.sidebar.divider()
 if st.sidebar.button("تسجيل الخروج"):
     logout_user()
 
@@ -116,34 +125,12 @@ if st.sidebar.button("تسجيل الخروج"):
 st.title("💼 منصة تحليل البيانات")
 st.write("قم برفع ملفك أو استخدم ميزات التحليل أدناه.")
 
-# إنشاء التبويبات
 tab_upload, tab_dashboard, tab_ai = st.tabs(["1️⃣ رفع البيانات", "2️⃣ لوحة التحكم", "3️⃣ المساعد الذكي"])
 
 with tab_upload:
     st.subheader("📂 ارفع ملفك هنا")
     uploaded_file = st.file_uploader("اختر ملف Excel أو CSV", type=["xlsx", "csv"])
     
-    st.divider()
-    st.subheader("🔗 أو اسحب البيانات من Google Sheets")
-    gs_url = st.text_input("أدخل رابط الشيت:")
-    if st.button("سحب البيانات"):
-        if gs_url:
-            with st.spinner("جارٍ السحب..."):
-                try:
-                    if "/edit" in gs_url:
-                        csv_url = gs_url.split("/edit")[0] + "/export?format=csv"
-                    else:
-                        csv_url = gs_url
-                    df = pd.read_csv(csv_url)
-                    st.session_state.df = df
-                    save_file(st.session_state.user_email, "Google_Sheets_Data", df)
-                    st.success("✅ تم سحب البيانات!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"فشل الاتصال: {e}")
-        else:
-            st.warning("أدخل الرابط أولاً.")
-
     if uploaded_file:
         with st.spinner("جارٍ تحليل الملف..."):
             try:
