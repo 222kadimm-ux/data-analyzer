@@ -7,10 +7,12 @@ import json
 import uuid
 import sentry_sdk
 import gspread
+import markdown
 import extra_streamlit_components as stx
 from google.oauth2.service_account import Credentials
 from sqlalchemy import create_engine
 from prophet import Prophet
+from weasyprint import HTML
 from database import init_db, save_file, get_files, delete_file, get_db_connection
 from auth import create_user, verify_user, login_user, logout_user
 from ai_engine import ask_ai_about_data, generate_sql_from_question
@@ -68,8 +70,10 @@ t = {
         "password": "Mot de passe",
         "sql_url": "1. URL de la base de données (postgresql://...)",
         "sql_table": "2. Nom de la table:",
-        "sql_question": "3. Votre question (ex: Combien de produits défectueux?)",
+        "sql_question": "3. Votre question:",
         "sql_generate": "Générer et exécuter",
+        "report_btn": "📝 Générer un rapport automatique",
+        "download_pdf": "📥 Télécharger le rapport en PDF",
     },
     "AR": {
         "title": "🏭 محلل بيانات المؤسسات (OEE & AI)",
@@ -90,13 +94,47 @@ t = {
         "password": "كلمة المرور",
         "sql_url": "1. رابط قاعدة البيانات (postgresql://...)",
         "sql_table": "2. اسم الجدول:",
-        "sql_question": "3. سؤالك (مثلاً: كم عدد المنتجات المعيبة؟)",
+        "sql_question": "3. سؤالك:",
         "sql_generate": "توليد وتنفيذ الاستعلام",
+        "report_btn": "📝 تقرير تلقائي",
+        "download_pdf": "📥 تحميل التقرير كـ PDF",
     }
 }[st.session_state.lang]
 
 # ==========================================
-# 3. إدارة الكوكيز والدوال المساعدة
+# 3. دالة توليد PDF
+# ==========================================
+def generate_pdf_report(report_text, lang="FR"):
+    title = "Rapport d'Analyse" if lang == "FR" else "تقرير التحليل"
+    direction = "ltr" if lang == "FR" else "rtl"
+    
+    html_content = f"""
+    <html dir="{direction}">
+    <head>
+        <meta charset="utf-8">
+        <style>
+            body {{ font-family: 'Helvetica Neue', Arial, sans-serif; padding: 40px; color: #333; }}
+            h1 {{ color: #4CAF50; text-align: center; }}
+            .content {{ line-height: 1.6; background: #f9f9f9; padding: 20px; border-radius: 8px; }}
+            .footer {{ text-align: center; margin-top: 50px; font-size: 12px; color: #888; }}
+        </style>
+    </head>
+    <body>
+        <h1>🏭 {title}</h1>
+        <div class="content">
+            <p>{report_text.replace('\n', '<br>')}</p>
+        </div>
+        <div class="footer">
+            Généré par Enterprise Data Analyzer | {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}
+        </div>
+    </body>
+    </html>
+    """
+    pdf_bytes = HTML(string=html_content).write_pdf()
+    return pdf_bytes
+
+# ==========================================
+# 4. إدارة الكوكيز والدوال المساعدة
 # ==========================================
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
@@ -140,7 +178,7 @@ def delete_my_account(email):
     finally: cur.close(); conn.close()
 
 # ==========================================
-# 4. تهيئة الجلسة
+# 5. تهيئة الجلسة
 # ==========================================
 if 'db_initialized' not in st.session_state:
     init_db()
@@ -151,11 +189,9 @@ if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'user_email' not in st.session_state: st.session_state.user_email = None
 
 # ==========================================
-# 5. القائمة الجانبية (مبسطة للمؤسسات)
+# 6. القائمة الجانبية
 # ==========================================
 st.sidebar.title("Enterprise Data Analyzer")
-
-# رسالة توضيحية بدلاً من حقول الدخول المزعجة
 st.sidebar.info("💾 Sauvegarde automatique activée / الحفظ التلقائي مفعل")
 
 if not st.session_state.logged_in:
@@ -189,7 +225,7 @@ for f in files:
         delete_file(f[0], current_user); st.rerun()
 
 # ==========================================
-# 6. الواجهة الرئيسية
+# 7. الواجهة الرئيسية
 # ==========================================
 st.title(t["title"])
 st.write("Solution professionnelle pour l'analyse des données industrielles et commerciales." if st.session_state.lang == "FR" else "حل احترافي لتحليل بيانات المصانع والشركات.")
@@ -319,9 +355,19 @@ with tab_forecast:
 with tab_ai:
     if st.session_state.df is None: st.info(t["no_data"])
     else:
-        if st.button("📝 Générer un rapport automatique"):
+        if st.button(t["report_btn"]):
             with st.spinner("..."):
-                st.info(ask_ai_about_data("Donne-moi un rapport complet et 3 recommandations." if st.session_state.lang=="FR" else "أعطني تقريراً شاملاً وأهم 3 توصيات.", st.session_state.df))
+                report_text = ask_ai_about_data("Donne-moi un rapport complet et 3 recommandations." if st.session_state.lang=="FR" else "أعطني تقريراً شاملاً وأهم 3 توصيات.", st.session_state.df)
+                st.info(report_text)
+                
+                # زر تصدير PDF
+                pdf_file = generate_pdf_report(report_text, st.session_state.lang)
+                st.download_button(
+                    label=t["download_pdf"],
+                    data=pdf_file,
+                    file_name="Rapport_Analyse.pdf",
+                    mime="application/pdf"
+                )
         
         question = st.text_input("Question / سؤال:")
         if st.button("Envoyer / إرسال"):
