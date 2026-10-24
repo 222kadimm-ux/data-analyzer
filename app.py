@@ -208,12 +208,7 @@ with tab_upload:
             if uploaded_file.size > 100 * 1024 * 1024: st.error("🚫 Limite 100MB."); st.stop()
             with st.spinner("..."):
                 try:
-                    # التعديل هنا: إضافة ignore_errors و infer_schema_length
-                    if uploaded_file.name.endswith('.csv'):
-                        df = pl.read_csv(uploaded_file, infer_schema_length=10000, ignore_errors=True)
-                    else:
-                        df = pl.read_excel(uploaded_file)
-                    
+                    df = pl.read_csv(uploaded_file, infer_schema_length=10000, ignore_errors=True) if uploaded_file.name.endswith('.csv') else pl.read_excel(uploaded_file)
                     df = df.drop_nulls().unique()
                     st.session_state.df = df
                     save_file(current_user, uploaded_file.name, df.head(5000).to_pandas() if df.height > 5000 else df.to_pandas())
@@ -261,6 +256,20 @@ with tab_oee:
         oee_data, error = engine.calculate_oee()
         if error:
             st.warning(f"⚠️ {error}")
+            st.info("💡 **Suggestion:** Vos données ne contiennent pas les colonnes OEE. Voulez-vous analyser une autre métrique ?" if st.session_state.lang == "FR" else "💡 **اقتراح:** بياناتك لا تحتوي على أعمدة OEE. هل تريد تحليل مقياس آخر؟")
+            
+            df = st.session_state.df.to_pandas()
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            
+            if numeric_cols:
+                st.write("**Colonnes numériques disponibles:**" if st.session_state.lang == "FR" else "**الأعمدة الرقمية المتاحة:**")
+                for col in numeric_cols:
+                    st.write(f"- {col} (Moyenne / المتوسط: {df[col].mean():.2f}, Max: {df[col].max():.2f})")
+                
+                st.write("**Analyse alternative suggérée:**" if st.session_state.lang == "FR" else "**تحليل بديل مقترح:**")
+                st.bar_chart(df[numeric_cols[0]].head(20))
+            else:
+                st.error("❌ Aucune colonne numérique trouvée." if st.session_state.lang == "FR" else "❌ لا توجد أعمدة رقمية.")
         else:
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Disponibilité / الإتاحة", f"{oee_data['availability']:.1f}%")
