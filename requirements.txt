@@ -12,6 +12,8 @@ google-auth
 sentry-sdk
 polars
 sqlalchemy
+weasyprint
+markdown
 prophet
 
 
