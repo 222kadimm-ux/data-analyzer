@@ -355,7 +355,7 @@ with tab_forecast:
                         
                         m = Prophet()
                         m.fit(prophet_df)
-                        future = m.make_future_dataframe(periods=periods, freq='M')
+                        future = m.make_future_dataframe(periods=periods, freq='ME')
                         forecast = m.predict(future)
                         
                         fig = m.plot(forecast)
