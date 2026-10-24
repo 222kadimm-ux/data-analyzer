@@ -11,9 +11,7 @@ class AIAssistant:
         }
 
     def _call_api(self, prompt):
-        if not self.api_key:
-            return "⚠️ API Key missing."
-        
+        if not self.api_key: return "⚠️ API Key missing."
         data = {
             "model": "openrouter/free",
             "messages": [{"role": "user", "content": prompt}],
@@ -27,22 +25,11 @@ class AIAssistant:
             return f"Error: {e}"
 
     def generate_report(self, df_polars, lang="FR"):
-        # تحويل سريع للبيانات
         df_pandas = df_polars.head(1000).to_pandas()
         stats = df_pandas.describe().to_string()
-        
-        prompt = f"""
-        Tu es un analyste de données. Voici les statistiques:
-        {stats}
-        
-        Donne-moi un rapport complet avec 3 recommandations en {'Français' if lang == 'FR' else 'Arabe'}.
-        """
+        prompt = f"Analyse ces données:\n{stats}\nDonne un rapport et 3 recommandations en {'Français' if lang=='FR' else 'Arabe'}."
         return self._call_api(prompt)
 
     def generate_sql(self, question, table_name):
-        prompt = f"""
-        Génère une requête SQL (SELECT) pour la table `{table_name}`.
-        Question: "{question}"
-        Réponds uniquement avec le code SQL, sans markdown.
-        """
+        prompt = f"Génère une requête SQL (SELECT) pour la table `{table_name}`.\nQuestion: {question}\nRéponds uniquement avec le code SQL."
         return self._call_api(prompt)
