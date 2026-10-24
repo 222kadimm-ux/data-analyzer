@@ -11,7 +11,9 @@ class AIAssistant:
         }
 
     def _call_api(self, prompt):
-        if not self.api_key: return "⚠️ API Key missing."
+        if not self.api_key:
+            return "⚠️ API Key missing."
+        
         data = {
             "model": "openrouter/free",
             "messages": [{"role": "user", "content": prompt}],
