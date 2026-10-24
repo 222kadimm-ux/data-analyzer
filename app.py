@@ -59,8 +59,6 @@ t = {
         "ai_tab": "5️⃣ Assistant IA",
         "sql_tab": "6️⃣ Requête SQL",
         "file_upload": "Choisir un fichier Excel ou CSV",
-        "gsheets": "Google Sheets",
-        "sql": "Base de données SQL",
         "no_data": "⚠️ Veuillez importer des données d'abord.",
         "saved_work": "🗂️ Vos fichiers précédents",
         "login_portal": "🔒 Portail Employés (Optionnel)",
@@ -83,8 +81,6 @@ t = {
         "ai_tab": "5️⃣ المساعد الذكي",
         "sql_tab": "6️⃣ اسأل SQL",
         "file_upload": "اختر ملف Excel أو CSV",
-        "gsheets": "Google Sheets",
-        "sql": "قاعدة بيانات SQL",
         "no_data": "⚠️ يرجى رفع البيانات أولاً.",
         "saved_work": "🗂️ ملفاتك السابقة",
         "login_portal": "🔒 بوابة الموظفين (اختياري)",
@@ -155,7 +151,6 @@ if 'df' not in st.session_state: st.session_state.df = None
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'user_email' not in st.session_state: st.session_state.user_email = None
 
-# إنشاء كائنات من الفئات
 ai_assistant = AIAssistant()
 
 # ==========================================
@@ -213,7 +208,12 @@ with tab_upload:
             if uploaded_file.size > 100 * 1024 * 1024: st.error("🚫 Limite 100MB."); st.stop()
             with st.spinner("..."):
                 try:
-                    df = pl.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pl.read_excel(uploaded_file)
+                    # التعديل هنا: إضافة ignore_errors و infer_schema_length
+                    if uploaded_file.name.endswith('.csv'):
+                        df = pl.read_csv(uploaded_file, infer_schema_length=10000, ignore_errors=True)
+                    else:
+                        df = pl.read_excel(uploaded_file)
+                    
                     df = df.drop_nulls().unique()
                     st.session_state.df = df
                     save_file(current_user, uploaded_file.name, df.head(5000).to_pandas() if df.height > 5000 else df.to_pandas())
