@@ -295,7 +295,7 @@ with tab_upload:
                 except Exception as e: st.error(f"❌ {e}")
 
     elif "Google" in option:
-        st.info("💡 **Pour les entreprises:** Partagez votre Google Sheet avec cet email: `sheets-bot@data-analyzer-512419.iam.gserviceaccount.com`")
+        st.info("💡 **Pour les entreprises:** Partagez votre Google Sheet avec cet email: `sheets-bot@data-analyzer-512419.iam.gserviceaccount.com`" if st.session_state.lang != "AR" else "💡 **للشركات:** شارك جدول Google Sheets مع هذا البريد: `sheets-bot@data-analyzer-512419.iam.gserviceaccount.com`")
         gs_url = st.text_input("URL Google Sheets:")
         if st.button("Import / سحب"):
             if gs_url:
@@ -304,10 +304,10 @@ with tab_upload:
                     st.session_state.df = df
                     save_file(current_user, "Google_Sheets", df.head(5000).to_pandas())
                     st.success("✅")
-                else: st.error("❌")
+                else: st.error("❌ Échec de la connexion. Vérifiez le lien et les permissions.")
 
     elif "SQL" in option:
-        st.info("💡 Contactez votre service IT pour obtenir l'URL." if st.session_state.lang != "AR" else "💡 اتصل بقسم تقنية المعلومات.")
+        st.info("💡 Contactez votre service IT pour obtenir l'URL." if st.session_state.lang != "AR" else "💡 اتصل بقسم تقنية المعلومات للحصول على رابط قاعدة البيانات.")
         db_url = st.text_input("URL (postgresql://...)", type="password")
         table_name = st.text_input("Table:")
         if st.button("Import / سحب"):
@@ -344,7 +344,7 @@ with tab_dashboard:
         c1.metric("Records / سجلات", f"{stats['records']:,}")
         c2.metric("Total", f"{stats['total']:,.0f}")
 
-# --- OEE (مسرع) ---
+# --- OEE ---
 @st.fragment
 def render_oee():
     if st.session_state.df is None: st.info(t["no_data"])
@@ -376,7 +376,7 @@ def render_oee():
 with tab_oee:
     render_oee()
 
-# --- التنبؤ (مسرع) ---
+# --- التنبؤ ---
 @st.fragment
 def render_forecast():
     if st.session_state.df is None: st.info(t["no_data"])
@@ -442,7 +442,7 @@ with tab_sql:
         else:
             st.warning("Fill all fields / املأ الحقول")
 
-# --- Live (مسرع) ---
+# --- Live ---
 with tab_live:
     st.subheader("📈 Analyse en Direct / التحليل اللحظي / Live Analysis")
     st.write("Cette section simule un flux de données en temps réel depuis vos machines." if st.session_state.lang != "AR" else "هذا القسم يحاكي تدفق البيانات اللحظي من آلاتك.")
