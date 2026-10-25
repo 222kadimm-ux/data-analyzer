@@ -51,7 +51,7 @@ class DataQualityChecker:
         else:
             return f"🔴 **جودة البيانات ضعيفة ({score}/100)**.", issues
 
-    # دالة الإصلاح التلقائي الجديدة
+    # دالة الإصلاح التلقائي
     def auto_fix(self):
         df = self.df.clone()
         
