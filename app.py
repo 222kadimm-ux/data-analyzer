@@ -49,6 +49,7 @@ st.markdown("""
 if 'lang' not in st.session_state:
     st.session_state.lang = "FR"
 
+# قائمة اللغة في القائمة الجانبية
 lang = st.sidebar.selectbox("🌐 Language / Langue / اللغة", ["FR (Français)", "AR (العربية)", "EN (English)"])
 if "AR" in lang: st.session_state.lang = "AR"
 elif "EN" in lang: st.session_state.lang = "EN"
@@ -199,6 +200,11 @@ ai_assistant = AIAssistant()
 st.sidebar.title("Enterprise Data Analyzer")
 st.sidebar.info("💾 Sauvegarde automatique activée" if st.session_state.lang != "AR" else "💾 الحفظ التلقائي مفعل")
 
+# زر الأمان
+if st.sidebar.button("🛡️ Sécurité / الأمان / Security"):
+    st.session_state.show_security = True
+    st.rerun()
+
 if not st.session_state.logged_in:
     with st.sidebar.expander(t["login_portal"]):
         login_email = st.text_input(t["email"], key="l_email")
@@ -229,32 +235,18 @@ for f in files:
     if col2.button("🗑️", key=f"del_{f[0]}"):
         delete_file(f[0], current_user); st.rerun()
 
-# إضافة زر الأمان
-st.sidebar.divider()
-if st.sidebar.button("🛡️ Sécurité / الأمان / Security"):
-    st.session_state.show_security = True
-    st.rerun()
-
 # عرض صفحة الأمان
 if st.session_state.show_security:
     st.title("🛡️ Sécurité et Confidentialité / الأمان والخصوصية")
     st.markdown("""
     ### 1. Protection des données / حماية البيانات
-    - **Hébergement:** Vos données sont hébergées sur des serveurs sécurisés (Neon PostgreSQL).
-    - **Chiffrement:** Tous les mots de passe sont chiffrés avec `bcrypt`.
-    - **Accès:** Seuls les utilisateurs autorisés (avec votre email) peuvent accéder à vos fichiers.
-
-    ### 2. Conformité / الامتثال
-    - **RGPD:** Nous respectons les principes du RGPD (droit à l'oubli, portabilité).
-    - **Pas de revente:** Nous ne vendons jamais vos données à des tiers.
-
-    ### 3. Isolation des données / عزل البيانات
-    - Chaque utilisateur (ou entreprise) dispose d'un espace isolé (UUID). Vous ne voyez que vos propres fichiers.
-
-    ### 4. Contact / الاتصال
-    Pour toute question de sécurité : `security@pro-data-analyzer.com`
-    """)
+    - Vos données sont hébergées sur des serveurs sécurisés (Neon PostgreSQL).
+    - Tous les mots de passe sont chiffrés avec `bcrypt`.
     
+    ### 2. Conformité / الامتثال
+    - Nous respectons les principes du RGPD.
+    - Nous ne vendons jamais vos données à des tiers.
+    """)
     if st.button("Retour / عودة"):
         st.session_state.show_security = False
         st.rerun()
