@@ -12,6 +12,7 @@ google-auth
 sentry-sdk
 polars
 sqlalchemy
+shopifyapi
 weasyprint
 markdown
 prophet
