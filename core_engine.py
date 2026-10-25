@@ -1,6 +1,5 @@
 import polars as pl
 import pandas as pd
-import shopify
 
 class DataEngine:
     def __init__(self, df_polars):
@@ -18,6 +17,7 @@ class DataEngine:
         req = ['Planned_Time_Mins', 'Downtime_Mins', 'Ideal_Cycle_Time_Sec', 'Total_Count', 'Good_Count']
         if not all(c in df.columns for c in req):
             return None, "Colonnes OEE manquantes"
+        
         try:
             df['Run_Time'] = df['Planned_Time_Mins'] - df['Downtime_Mins']
             df['Availability'] = df['Run_Time'] / df['Planned_Time_Mins']
@@ -25,12 +25,21 @@ class DataEngine:
             df['Performance'] = df['Ideal_Time'] / df['Run_Time']
             df['Quality'] = df['Good_Count'] / df['Total_Count']
             df['OEE'] = df['Availability'] * df['Performance'] * df['Quality']
-            return {
+            
+            perf = df['Performance'].mean() * 100
+            warning = None
+            # التحقق الذكي: إذا كان الأداء أقل من 50%، فهناك خطأ في البيانات
+            if perf < 50:
+                warning = "⚠️ الأداء منخفض جداً (أقل من 50%). يرجى التأكد من أن العمود 'Ideal_Cycle_Time_Sec' بالثواني (وليس بالدقائق)."
+            
+            result = {
                 "availability": df['Availability'].mean() * 100,
-                "performance": df['Performance'].mean() * 100,
+                "performance": perf,
                 "quality": df['Quality'].mean() * 100,
-                "oee": df['OEE'].mean() * 100
-            }, None
+                "oee": df['OEE'].mean() * 100,
+                "warning": warning
+            }
+            return result, None
         except Exception as e:
             return None, str(e)
 
@@ -49,15 +58,12 @@ class DataEngine:
         except Exception as e:
             return None, None, str(e)
 
-# --- دالة جلب بيانات Shopify ---
 def fetch_shopify_data(shop_url, api_key, password):
+    import shopify
     try:
         session = shopify.Session(shop_url, '2024-01', password)
         shopify.ShopifyResource.activate_session(session)
-        
-        # جلب الطلبات (أول 50 طلب كمثال)
         orders = shopify.Order.find(limit=50)
-        
         data = []
         for order in orders:
             data.append({
@@ -66,8 +72,7 @@ def fetch_shopify_data(shop_url, api_key, password):
                 'Customer_Email': order.email,
                 'Order_ID': order.id
             })
-        
         shopify.ShopifyResource.clear_session()
         return pl.from_pandas(pd.DataFrame(data)) if data else None
-    except Exception as e:
+    except:
         return None
