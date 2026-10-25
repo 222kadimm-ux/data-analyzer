@@ -180,6 +180,7 @@ if 'db_initialized' not in st.session_state:
 if 'df' not in st.session_state: st.session_state.df = None
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'user_email' not in st.session_state: st.session_state.user_email = None
+if 'show_security' not in st.session_state: st.session_state.show_security = False
 
 if "live_data" not in st.session_state:
     st.session_state.live_data = pd.DataFrame(
@@ -228,11 +229,42 @@ for f in files:
     if col2.button("🗑️", key=f"del_{f[0]}"):
         delete_file(f[0], current_user); st.rerun()
 
+# إضافة زر الأمان
+st.sidebar.divider()
+if st.sidebar.button("🛡️ Sécurité / الأمان / Security"):
+    st.session_state.show_security = True
+    st.rerun()
+
+# عرض صفحة الأمان
+if st.session_state.show_security:
+    st.title("🛡️ Sécurité et Confidentialité / الأمان والخصوصية")
+    st.markdown("""
+    ### 1. Protection des données / حماية البيانات
+    - **Hébergement:** Vos données sont hébergées sur des serveurs sécurisés (Neon PostgreSQL).
+    - **Chiffrement:** Tous les mots de passe sont chiffrés avec `bcrypt`.
+    - **Accès:** Seuls les utilisateurs autorisés (avec votre email) peuvent accéder à vos fichiers.
+
+    ### 2. Conformité / الامتثال
+    - **RGPD:** Nous respectons les principes du RGPD (droit à l'oubli, portabilité).
+    - **Pas de revente:** Nous ne vendons jamais vos données à des tiers.
+
+    ### 3. Isolation des données / عزل البيانات
+    - Chaque utilisateur (ou entreprise) dispose d'un espace isolé (UUID). Vous ne voyez que vos propres fichiers.
+
+    ### 4. Contact / الاتصال
+    Pour toute question de sécurité : `security@pro-data-analyzer.com`
+    """)
+    
+    if st.button("Retour / عودة"):
+        st.session_state.show_security = False
+        st.rerun()
+    st.stop()
+
 # ==========================================
 # 6. الواجهة الرئيسية
 # ==========================================
 st.title(t["title"])
-st.write("Solution professionnelle pour l'analyse des données industrielles." if st.session_state.lang == "FR" else ("Professional solution for industrial data analysis." if st.session_state.lang == "EN" else "حل احترافي لتحليل بيانات المصانع."))
+st.write("Solution professionnelle pour l'analyse des données industrielles." if st.session_state.lang == "FR" else ("Professional solution for industrial data analysis." if st.session_state.lang == "EN" else "حل احترافي لتحليل بيانات المصانع والشركات."))
 
 st.divider()
 
@@ -346,7 +378,6 @@ with tab_oee:
             c3.metric("Qualité / الجودة", f"{oee_data['quality']:.1f}%")
             c4.metric("OEE", f"{oee_data['oee']:.1f}%")
             
-            # التحقق الذكي: عرض التحذير إذا كان الأداء منخفضاً
             if oee_data.get("warning"):
                 st.warning(oee_data["warning"])
 
