@@ -49,7 +49,6 @@ st.markdown("""
 if 'lang' not in st.session_state:
     st.session_state.lang = "FR"
 
-# قائمة اللغة في القائمة الجانبية
 lang = st.sidebar.selectbox("🌐 Language / Langue / اللغة", ["FR (Français)", "AR (العربية)", "EN (English)"])
 if "AR" in lang: st.session_state.lang = "AR"
 elif "EN" in lang: st.session_state.lang = "EN"
@@ -200,7 +199,6 @@ ai_assistant = AIAssistant()
 st.sidebar.title("Enterprise Data Analyzer")
 st.sidebar.info("💾 Sauvegarde automatique activée" if st.session_state.lang != "AR" else "💾 الحفظ التلقائي مفعل")
 
-# زر الأمان
 if st.sidebar.button("🛡️ Sécurité / الأمان / Security"):
     st.session_state.show_security = True
     st.rerun()
@@ -235,7 +233,6 @@ for f in files:
     if col2.button("🗑️", key=f"del_{f[0]}"):
         delete_file(f[0], current_user); st.rerun()
 
-# عرض صفحة الأمان
 if st.session_state.show_security:
     st.title("🛡️ Sécurité et Confidentialité / الأمان والخصوصية")
     st.markdown("""
@@ -262,6 +259,7 @@ st.divider()
 
 tab_upload, tab_dashboard, tab_oee, tab_forecast, tab_ai, tab_sql, tab_live = st.tabs([t["upload_tab"], t["dashboard_tab"], t["oee_tab"], t["forecast_tab"], t["ai_tab"], t["sql_tab"], t["live_tab"]])
 
+# --- رفع البيانات ---
 with tab_upload:
     option = st.radio("Source de données", ["Fichier / ملف", "Google Sheets", "SQL", "Shopify"])
     
@@ -336,6 +334,7 @@ with tab_upload:
                         st.success("✅ Shopify Data Imported!")
                     else: st.error("❌ Failed to connect to Shopify.")
 
+# --- لوحة التحكم ---
 with tab_dashboard:
     if st.session_state.df is None: st.info(t["no_data"])
     else:
@@ -345,7 +344,9 @@ with tab_dashboard:
         c1.metric("Records / سجلات", f"{stats['records']:,}")
         c2.metric("Total", f"{stats['total']:,.0f}")
 
-with tab_oee:
+# --- OEE (مسرع) ---
+@st.fragment
+def render_oee():
     if st.session_state.df is None: st.info(t["no_data"])
     else:
         engine = DataEngine(st.session_state.df)
@@ -369,11 +370,15 @@ with tab_oee:
             c2.metric("Performance / الأداء", f"{oee_data['performance']:.1f}%")
             c3.metric("Qualité / الجودة", f"{oee_data['quality']:.1f}%")
             c4.metric("OEE", f"{oee_data['oee']:.1f}%")
-            
             if oee_data.get("warning"):
                 st.warning(oee_data["warning"])
 
-with tab_forecast:
+with tab_oee:
+    render_oee()
+
+# --- التنبؤ (مسرع) ---
+@st.fragment
+def render_forecast():
     if st.session_state.df is None: st.info(t["no_data"])
     else:
         df = st.session_state.df.to_pandas()
@@ -397,6 +402,10 @@ with tab_forecast:
                         st.success("✅")
                         st.pyplot(m.plot(forecast))
 
+with tab_forecast:
+    render_forecast()
+
+# --- AI ---
 with tab_ai:
     if st.session_state.df is None: st.info(t["no_data"])
     else:
@@ -412,6 +421,7 @@ with tab_ai:
         if st.button("Envoyer / إرسال / Send"):
             if question: st.success(ai_assistant._call_api(question))
 
+# --- SQL ---
 with tab_sql:
     sql_db_url = st.text_input(t["sql_url"], type="password", key="sql_db")
     sql_table = st.text_input(t["sql_table"], key="sql_table")
@@ -432,9 +442,7 @@ with tab_sql:
         else:
             st.warning("Fill all fields / املأ الحقول")
 
-# ==========================================
-# 7. تبويب التحليل اللحظي (Live Stream)
-# ==========================================
+# --- Live (مسرع) ---
 with tab_live:
     st.subheader("📈 Analyse en Direct / التحليل اللحظي / Live Analysis")
     st.write("Cette section simule un flux de données en temps réel depuis vos machines." if st.session_state.lang != "AR" else "هذا القسم يحاكي تدفق البيانات اللحظي من آلاتك.")
