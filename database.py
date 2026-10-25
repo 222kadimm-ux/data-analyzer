@@ -4,7 +4,7 @@ import pandas as pd
 import json
 from tenacity import retry, stop_after_attempt, wait_fixed
 
-# جلب الرابط من الملف السري بأمان
+# جلب رابط قاعدة البيانات من إعدادات Streamlit السرية
 DB_URL = st.secrets["DATABASE_URL"]
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
@@ -45,6 +45,7 @@ def init_db():
         conn.close()
 
 def get_user_role(email):
+    """جلب دور المستخدم (admin أو user)"""
     conn = get_db_connection()
     cur = conn.cursor()
     try:
@@ -58,6 +59,7 @@ def get_user_role(email):
         conn.close()
 
 def save_file(email, filename, df):
+    """حفظ ملف في قاعدة البيانات (مع تحويله إلى JSON)"""
     conn = get_db_connection()
     cur = conn.cursor()
     try:
@@ -66,17 +68,24 @@ def save_file(email, filename, df):
                     (email, filename, json_data))
         conn.commit()
         return True
-    except Exception:
+    except Exception as e:
         return False
     finally:
         cur.close()
         conn.close()
 
 def get_files(email):
+    """جلب الملفات الخاصة بمستخدم معين (عزل البيانات)"""
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT id, file_name, file_data, created_at FROM user_files WHERE user_email = %s ORDER BY created_at DESC", (email,))
+        # العزل: لا نعيد إلا الملفات التي تنتمي لهذا المستخدم (أو الـ UUID)
+        cur.execute("""
+            SELECT id, file_name, file_data, created_at 
+            FROM user_files 
+            WHERE user_email = %s 
+            ORDER BY created_at DESC
+        """, (email,))
         return cur.fetchall()
     except Exception:
         return []
@@ -85,9 +94,11 @@ def get_files(email):
         conn.close()
 
 def delete_file(file_id, email):
+    """حذف ملف (مع التأكد من أنه يخص المستخدم)"""
     conn = get_db_connection()
     cur = conn.cursor()
     try:
+        # العزل: لا يمكن حذف ملف لا يخص المستخدم
         cur.execute("DELETE FROM user_files WHERE id = %s AND user_email = %s", (file_id, email))
         conn.commit()
         return True
