@@ -1,6 +1,5 @@
 import polars as pl
 import pandas as pd
-from prophet import Prophet
 
 class DataEngine:
     def __init__(self, df_polars):
@@ -41,6 +40,9 @@ class DataEngine:
             return None, str(e)
 
     def generate_forecast(self, date_col, value_col, periods=3):
+        # استيراد Prophet داخل الدالة لتجنب مشاكل الاختبارات
+        from prophet import Prophet
+        
         try:
             prophet_df = self.df.to_pandas()[[date_col, value_col]].copy()
             prophet_df.columns = ['ds', 'y']
