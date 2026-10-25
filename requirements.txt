@@ -16,5 +16,6 @@ shopifyapi
 weasyprint
 markdown
 prophet
+st-gsheets-connection
 
 
