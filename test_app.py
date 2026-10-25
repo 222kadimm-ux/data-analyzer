@@ -15,7 +15,10 @@ def test_calculate_oee_valid():
     
     assert error is None
     assert result is not None
-    assert round(result['availability'], 2) == 0.94
+    # التحقق من الإتاحة بدقة (القيمة الحقيقية هي 93.75%)
+    assert result['availability'] == pytest.approx(93.75, 0.1)
+    # التحقق من الجودة (1450/1500 = 96.66%)
+    assert result['quality'] == pytest.approx(96.66, 0.1)
 
 def test_calculate_oee_missing_columns():
     df = pl.DataFrame({
