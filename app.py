@@ -181,9 +181,13 @@ if 'df' not in st.session_state: st.session_state.df = None
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'user_email' not in st.session_state: st.session_state.user_email = None
 
-# تهيئة بيانات البث اللحظي
+# تهيئة بيانات البث اللحظي (تم إصلاح freq='s')
 if "live_data" not in st.session_state:
-    st.session_state.live_data = pd.DataFrame(np.random.randn(100, 2), columns=["Line 1", "Line 2"], index=pd.date_range(end=datetime.now(), periods=100, freq='S'))
+    st.session_state.live_data = pd.DataFrame(
+        np.random.randn(100, 2), 
+        columns=["Line 1", "Line 2"], 
+        index=pd.date_range(end=datetime.now(), periods=100, freq='s')
+    )
 if "stream" not in st.session_state:
     st.session_state.stream = False
 
@@ -398,14 +402,13 @@ with tab_live:
     st.subheader("📈 Analyse en Direct / التحليل اللحظي / Live Analysis")
     st.write("Cette section simule un flux de données en temps réel depuis vos machines." if st.session_state.lang != "AR" else "هذا القسم يحاكي تدفق البيانات اللحظي من آلاتك.")
     
-    # دالة توليد البيانات اللحظية
     def get_recent_data(last_timestamp):
         now = datetime.now()
         if now - last_timestamp > timedelta(seconds=60):
             last_timestamp = now - timedelta(seconds=60)
         sample_time = timedelta(seconds=0.5)
         next_timestamp = last_timestamp + sample_time
-        timestamps = pd.date_range(next_timestamp, now, freq='0.5S')
+        timestamps = pd.date_range(next_timestamp, now, freq='0.5s')
         sample_values = np.random.randn(len(timestamps), 2)
         return pd.DataFrame(sample_values, index=timestamps, columns=["Line 1", "Line 2"])
 
