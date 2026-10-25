@@ -12,10 +12,10 @@ from google.oauth2.service_account import Credentials
 from sqlalchemy import create_engine
 from database import init_db, save_file, get_files, delete_file, get_db_connection
 from auth import create_user, verify_user, login_user, logout_user
-from core_engine import DataEngine
+from core_engine import DataEngine, fetch_shopify_data
 from ai_engine import AIAssistant
 from pdf_exporter import PDFExporter
-from quality_checker import DataQualityChecker # <-- إضافة الفئة الجديدة
+from quality_checker import DataQualityChecker
 
 # ==========================================
 # 1. إعدادات الصفحة
@@ -42,13 +42,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. نظام الترجمة (i18n)
+# 2. نظام الترجمة (i18n) - إضافة الإنجليزية
 # ==========================================
 if 'lang' not in st.session_state:
     st.session_state.lang = "FR"
 
-lang = st.sidebar.selectbox("🌐 Language / Langue", ["FR (Français)", "AR (العربية)"])
-st.session_state.lang = "AR" if "AR" in lang else "FR"
+lang = st.sidebar.selectbox("🌐 Language / Langue / اللغة", ["FR (Français)", "AR (العربية)", "EN (English)"])
+if "AR" in lang: st.session_state.lang = "AR"
+elif "EN" in lang: st.session_state.lang = "EN"
+else: st.session_state.lang = "FR"
 
 t = {
     "FR": {
@@ -94,6 +96,28 @@ t = {
         "sql_generate": "توليد وتنفيذ الاستعلام",
         "report_btn": "📝 تقرير تلقائي",
         "download_pdf": "📥 تحميل التقرير كـ PDF",
+    },
+    "EN": {
+        "title": "🏭 Enterprise Data Analyzer (OEE & AI)",
+        "upload_tab": "1️⃣ Import Data",
+        "dashboard_tab": "2️⃣ Dashboard",
+        "oee_tab": "3️⃣ OEE",
+        "forecast_tab": "4️⃣ Forecast",
+        "ai_tab": "5️⃣ AI Assistant",
+        "sql_tab": "6️⃣ SQL Query",
+        "file_upload": "Choose an Excel or CSV file",
+        "no_data": "⚠️ Please import data first.",
+        "saved_work": "🗂️ Your previous files",
+        "login_portal": "🔒 Employee Portal (Optional)",
+        "logout": "Logout",
+        "email": "Email",
+        "password": "Password",
+        "sql_url": "1. Database URL (postgresql://...)",
+        "sql_table": "2. Table name:",
+        "sql_question": "3. Your question:",
+        "sql_generate": "Generate & Execute",
+        "report_btn": "📝 Generate Auto Report",
+        "download_pdf": "📥 Download Report as PDF",
     }
 }[st.session_state.lang]
 
@@ -158,20 +182,20 @@ ai_assistant = AIAssistant()
 # 5. القائمة الجانبية
 # ==========================================
 st.sidebar.title("Enterprise Data Analyzer")
-st.sidebar.info("💾 Sauvegarde automatique activée / الحفظ التلقائي مفعل")
+st.sidebar.info("💾 Sauvegarde automatique activée / الحفظ التلقائي مفعل" if st.session_state.lang == "FR" else ("💾 Auto-Save Enabled" if st.session_state.lang == "EN" else "💾 الحفظ التلقائي مفعل"))
 
 if not st.session_state.logged_in:
     with st.sidebar.expander(t["login_portal"]):
         login_email = st.text_input(t["email"], key="l_email")
         login_pass = st.text_input(t["password"], type="password", key="l_pass")
-        if st.button("Login / دخول"):
+        if st.button("Login / دخول / Login"):
             if verify_user(login_email, login_pass):
                 login_user(login_email); st.rerun()
             else: st.error("Error / خطأ")
         
-        new_email = st.text_input("Nouveau / جديد", key="n_email")
-        new_pass = st.text_input("Mot de passe / كلمة المرور", type="password", key="n_pass")
-        if st.button("S'inscrire / إنشاء حساب"):
+        new_email = st.text_input("New Email / بريد جديد / Nouvel Email", key="n_email")
+        new_pass = st.text_input("New Password / كلمة مرور جديدة", type="password", key="n_pass")
+        if st.button("Register / إنشاء حساب / S'inscrire"):
             if len(new_pass) < 6: st.warning("Short / قصيرة")
             elif create_user(new_email, new_pass): st.success("✅"); st.rerun()
 else:
@@ -194,16 +218,16 @@ for f in files:
 # 6. الواجهة الرئيسية
 # ==========================================
 st.title(t["title"])
-st.write("Solution professionnelle pour l'analyse des données industrielles et commerciales." if st.session_state.lang == "FR" else "حل احترافي لتحليل بيانات المصانع والشركات.")
+st.write("Solution professionnelle..." if st.session_state.lang == "FR" else ("Professional solution for industrial data analysis." if st.session_state.lang == "EN" else "حل احترافي لتحليل بيانات المصانع والشركات."))
 
 st.divider()
 
 tab_upload, tab_dashboard, tab_oee, tab_forecast, tab_ai, tab_sql = st.tabs([t["upload_tab"], t["dashboard_tab"], t["oee_tab"], t["forecast_tab"], t["ai_tab"], t["sql_tab"]])
 
 with tab_upload:
-    option = st.radio("Source de données", ["Fichier / ملف", "Google Sheets", "SQL"])
+    option = st.radio("Source de données / مصدر البيانات / Data Source", ["Fichier / ملف / File", "Google Sheets", "SQL", "Shopify"])
     
-    if "Fichier" in option or "ملف" in option:
+    if "Fichier" in option or "ملف" in option or "File" in option:
         uploaded_file = st.file_uploader(t["file_upload"], type=["xlsx", "csv"])
         if uploaded_file:
             if uploaded_file.size > 100 * 1024 * 1024: st.error("🚫 Limite 100MB."); st.stop()
@@ -215,19 +239,13 @@ with tab_upload:
                     save_file(current_user, uploaded_file.name, df.head(5000).to_pandas() if df.height > 5000 else df.to_pandas())
                     st.success(f"✅ Importé avec succès! ({df.height:,})")
                     
-                    # --- إضافة طبقة تشخيص جودة البيانات ---
                     checker = DataQualityChecker(df)
                     report_msg, issues = checker.get_report()
-                    
                     if issues:
                         st.warning(report_msg)
-                        with st.expander("🔍 عرض المشاكل المكتشفة / Voir les problèmes"):
-                            for issue in issues:
-                                st.write(issue)
-                    else:
-                        st.success(report_msg)
-                    # -------------------------------------
-
+                        with st.expander("🔍 Voir les problèmes / عرض المشاكل / View Issues"):
+                            for issue in issues: st.write(issue)
+                    else: st.success(report_msg)
                 except Exception as e: st.error(f"❌ {e}")
 
     elif "Google" in option:
@@ -243,7 +261,7 @@ with tab_upload:
                 else: st.error("❌")
 
     elif "SQL" in option:
-        st.info("💡 Contactez votre service IT pour obtenir l'URL de votre base de données." if st.session_state.lang == "FR" else "💡 اتصل بقسم تقنية المعلومات للحصول على رابط قاعدة البيانات.")
+        st.info("💡 Contactez votre service IT..." if st.session_state.lang != "AR" else "💡 اتصل بقسم تقنية المعلومات...")
         db_url = st.text_input("URL (postgresql://...)", type="password")
         table_name = st.text_input("Table:")
         if st.button("Import / سحب"):
@@ -254,6 +272,21 @@ with tab_upload:
                     save_file(current_user, "SQL_Data", df.to_pandas())
                     st.success("✅")
                 else: st.error("❌")
+
+    elif "Shopify" in option:
+        st.info("💡 Connectez votre boutique Shopify / اربط متجرك / Connect your store")
+        shop_url = st.text_input("Shop URL (e.g., my-store.myshopify.com):")
+        api_key = st.text_input("API Key:", type="password")
+        password = st.text_input("API Password:", type="password")
+        if st.button("Fetch Shopify Data / جلب البيانات"):
+            if shop_url and api_key and password:
+                with st.spinner("..."):
+                    df = fetch_shopify_data(shop_url, api_key, password)
+                    if df is not None:
+                        st.session_state.df = df
+                        save_file(current_user, "Shopify_Data", df.to_pandas())
+                        st.success("✅ Shopify Data Imported!")
+                    else: st.error("❌ Failed to connect to Shopify. Check your credentials.")
 
 with tab_dashboard:
     if st.session_state.df is None: st.info(t["no_data"])
@@ -271,25 +304,25 @@ with tab_oee:
         oee_data, error = engine.calculate_oee()
         if error:
             st.warning(f"⚠️ {error}")
-            st.info("💡 **Suggestion:** Vos données ne contiennent pas les colonnes OEE. Voulez-vous analyser une autre métrique ?" if st.session_state.lang == "FR" else "💡 **اقتراح:** بياناتك لا تحتوي على أعمدة OEE. هل تريد تحليل مقياس آخر؟")
+            st.info("💡 **Suggestion:** Vos données ne contiennent pas les colonnes OEE. Voulez-vous analyser une autre métrique ?" if st.session_state.lang == "FR" else ("💡 **Suggestion:** Your data doesn't contain OEE columns. Analyze another metric?" if st.session_state.lang == "EN" else "💡 **اقتراح:** بياناتك لا تحتوي على أعمدة OEE. هل تريد تحليل مقياس آخر؟"))
             
             df = st.session_state.df.to_pandas()
             numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
             
             if numeric_cols:
-                st.write("**Colonnes numériques disponibles:**" if st.session_state.lang == "FR" else "**الأعمدة الرقمية المتاحة:**")
+                st.write("**Colonnes numériques disponibles:**" if st.session_state.lang == "FR" else ("**Available numeric columns:**" if st.session_state.lang == "EN" else "**الأعمدة الرقمية المتاحة:**"))
                 for col in numeric_cols:
                     st.write(f"- {col} (Moyenne / المتوسط: {df[col].mean():.2f}, Max: {df[col].max():.2f})")
                 
-                st.write("**Analyse alternative suggérée:**" if st.session_state.lang == "FR" else "**تحليل بديل مقترح:**")
+                st.write("**Analyse alternative suggérée:**" if st.session_state.lang == "FR" else ("**Suggested alternative analysis:**" if st.session_state.lang == "EN" else "**تحليل بديل مقترح:**"))
                 st.bar_chart(df[numeric_cols[0]].head(20))
             else:
-                st.error("❌ Aucune colonne numérique trouvée." if st.session_state.lang == "FR" else "❌ لا توجد أعمدة رقمية.")
+                st.error("❌ Aucune colonne numérique trouvée." if st.session_state.lang == "FR" else ("❌ No numeric columns found." if st.session_state.lang == "EN" else "❌ لا توجد أعمدة رقمية."))
         else:
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Disponibilité / الإتاحة", f"{oee_data['availability']:.1f}%")
-            c2.metric("Performance / الأداء", f"{oee_data['performance']:.1f}%")
-            c3.metric("Qualité / الجودة", f"{oee_data['quality']:.1f}%")
+            c1.metric("Disponibilité / الإتاحة / Availability", f"{oee_data['availability']:.1f}%")
+            c2.metric("Performance / الأداء / Performance", f"{oee_data['performance']:.1f}%")
+            c3.metric("Qualité / الجودة / Quality", f"{oee_data['quality']:.1f}%")
             c4.metric("OEE", f"{oee_data['oee']:.1f}%")
 
 with tab_forecast:
@@ -300,14 +333,14 @@ with tab_forecast:
         numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
         
         if not date_cols or not numeric_cols:
-            st.warning("⚠️ Besoin d'une colonne Date et numérique." if st.session_state.lang == "FR" else "⚠️ تحتاج إلى عمود للتاريخ وعمود رقمي.")
+            st.warning("⚠️ Besoin d'une colonne Date et numérique." if st.session_state.lang == "FR" else ("⚠️ Need a Date and numeric column." if st.session_state.lang == "EN" else "⚠️ تحتاج إلى عمود للتاريخ وعمود رقمي."))
         else:
             col1, col2 = st.columns(2)
             date_col = col1.selectbox("Colonne Date:", date_cols)
             value_col = col2.selectbox("Colonne Valeur:", numeric_cols)
             periods = st.slider("Périodes futures:", 1, 12, 3)
             
-            if st.button("Générer les prévisions"):
+            if st.button("Générer les prévisions / توليد التنبؤ / Generate Forecast"):
                 with st.spinner("..."):
                     engine = DataEngine(st.session_state.df)
                     m, forecast, error = engine.generate_forecast(date_col, value_col, periods)
@@ -327,8 +360,8 @@ with tab_ai:
                 pdf_file = PDFExporter.generate(report, st.session_state.lang)
                 st.download_button(t["download_pdf"], pdf_file, "report.pdf", "application/pdf")
         
-        question = st.text_input("Question / سؤال:")
-        if st.button("Envoyer / إرسال"):
+        question = st.text_input("Question / سؤال / Question:")
+        if st.button("Envoyer / إرسال / Send"):
             if question: st.success(ai_assistant._call_api(question))
 
 with tab_sql:
