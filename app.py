@@ -253,7 +253,6 @@ with tab_upload:
                     save_file(current_user, uploaded_file.name, df.head(5000).to_pandas() if df.height > 5000 else df.to_pandas())
                     st.success(f"✅ Importé avec succès! ({df.height:,})")
                     
-                    # --- طبقة جودة البيانات مع زر الإصلاح ---
                     checker = DataQualityChecker(df)
                     report_msg, issues = checker.get_report()
                     
@@ -271,8 +270,6 @@ with tab_upload:
                                 st.rerun()
                     else:
                         st.success(report_msg)
-                    # ----------------------------------------
-
                 except Exception as e: st.error(f"❌ {e}")
 
     elif "Google" in option:
@@ -348,6 +345,10 @@ with tab_oee:
             c2.metric("Performance / الأداء", f"{oee_data['performance']:.1f}%")
             c3.metric("Qualité / الجودة", f"{oee_data['quality']:.1f}%")
             c4.metric("OEE", f"{oee_data['oee']:.1f}%")
+            
+            # التحقق الذكي: عرض التحذير إذا كان الأداء منخفضاً
+            if oee_data.get("warning"):
+                st.warning(oee_data["warning"])
 
 with tab_forecast:
     if st.session_state.df is None: st.info(t["no_data"])
