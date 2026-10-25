@@ -181,7 +181,6 @@ if 'df' not in st.session_state: st.session_state.df = None
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'user_email' not in st.session_state: st.session_state.user_email = None
 
-# تهيئة بيانات البث اللحظي (تم إصلاح freq='s')
 if "live_data" not in st.session_state:
     st.session_state.live_data = pd.DataFrame(
         np.random.randn(100, 2), 
@@ -254,13 +253,26 @@ with tab_upload:
                     save_file(current_user, uploaded_file.name, df.head(5000).to_pandas() if df.height > 5000 else df.to_pandas())
                     st.success(f"✅ Importé avec succès! ({df.height:,})")
                     
+                    # --- طبقة جودة البيانات مع زر الإصلاح ---
                     checker = DataQualityChecker(df)
                     report_msg, issues = checker.get_report()
+                    
                     if issues:
                         st.warning(report_msg)
                         with st.expander("🔍 Voir les problèmes"):
                             for issue in issues: st.write(issue)
-                    else: st.success(report_msg)
+                        
+                        if st.button("🛠️ Réparer les données automatiquement / إصلاح البيانات تلقائياً"):
+                            with st.spinner("..."):
+                                fixed_df = checker.auto_fix()
+                                st.session_state.df = fixed_df
+                                save_file(current_user, uploaded_file.name + "_fixed", fixed_df.head(5000).to_pandas())
+                                st.success("✅ Données réparées avec succès! / تم إصلاح البيانات!")
+                                st.rerun()
+                    else:
+                        st.success(report_msg)
+                    # ----------------------------------------
+
                 except Exception as e: st.error(f"❌ {e}")
 
     elif "Google" in option:
@@ -368,6 +380,7 @@ with tab_ai:
             with st.spinner("..."):
                 report = ai_assistant.generate_report(st.session_state.df, st.session_state.lang)
                 st.info(report)
+                
                 pdf_file = PDFExporter.generate(report, st.session_state.lang)
                 st.download_button(t["download_pdf"], pdf_file, "report.pdf", "application/pdf")
         
