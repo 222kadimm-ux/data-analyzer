@@ -15,6 +15,7 @@ from auth import create_user, verify_user, login_user, logout_user
 from core_engine import DataEngine
 from ai_engine import AIAssistant
 from pdf_exporter import PDFExporter
+from quality_checker import DataQualityChecker # <-- إضافة الفئة الجديدة
 
 # ==========================================
 # 1. إعدادات الصفحة
@@ -213,6 +214,20 @@ with tab_upload:
                     st.session_state.df = df
                     save_file(current_user, uploaded_file.name, df.head(5000).to_pandas() if df.height > 5000 else df.to_pandas())
                     st.success(f"✅ Importé avec succès! ({df.height:,})")
+                    
+                    # --- إضافة طبقة تشخيص جودة البيانات ---
+                    checker = DataQualityChecker(df)
+                    report_msg, issues = checker.get_report()
+                    
+                    if issues:
+                        st.warning(report_msg)
+                        with st.expander("🔍 عرض المشاكل المكتشفة / Voir les problèmes"):
+                            for issue in issues:
+                                st.write(issue)
+                    else:
+                        st.success(report_msg)
+                    # -------------------------------------
+
                 except Exception as e: st.error(f"❌ {e}")
 
     elif "Google" in option:
