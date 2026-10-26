@@ -279,24 +279,28 @@ with tab_upload:
                     
                     if st.button("🛠️ Réparer les données automatiquement / إصلاح البيانات تلقائياً"):
                         with st.spinner("..."):
-                            fixed_df = checker.auto_fix()
+                            fixed_df, removed = checker.get_fix_preview()
                             st.session_state.df = fixed_df
                             save_file(current_user, uploaded_file.name + "_fixed", fixed_df.head(5000).to_pandas())
-                            st.success("✅ Données réparées avec succès! / تم إصلاح البيانات!")
+                            st.success(f"✅ Données réparées avec succès! ({removed} doublons supprimés)")
                             st.rerun()
                 else:
                     st.success(report_msg)
             except Exception as e: st.error(f"❌ {e}")
 
-# --- 2. لوحة التحكم ---
+# --- 2. لوحة التحكم (إصلاح: عرض إحصائيات لكل الأعمدة) ---
 with tab_dashboard:
     if st.session_state.df is None: st.info(t["no_data"])
     else:
         engine = DataEngine(st.session_state.df)
         stats = engine.get_basic_stats()
-        c1, c2 = st.columns(2)
+        c1 = st.columns(1)[0]
         c1.metric("Records / سجلات", f"{stats['records']:,}")
-        c2.metric("Total", f"{stats['total']:,.0f}")
+        
+        if stats['details']:
+            st.subheader("Total par colonne / الإجمالي لكل عمود" if st.session_state.lang != "AR" else "الإجمالي لكل عمود")
+            for detail in stats['details']:
+                st.write(f"- {detail['column']}: {detail['total']:,.0f}")
 
 # --- 3. OEE (مسرع) ---
 @st.fragment
@@ -392,9 +396,10 @@ with tab_advanced:
                     generated_sql = ai_assistant.generate_sql(sql_question, sql_table)
                     st.code(generated_sql, language="sql")
                     
-                    # تأمين SQL: يجب أن يبدأ بـ SELECT
-                    if not generated_sql.strip().upper().startswith("SELECT"):
-                        st.error("❌ الاستعلام غير آمن. يجب أن يبدأ بـ SELECT.")
+                    # تأمين SQL
+                    sql_upper = generated_sql.strip().upper()
+                    if not sql_upper.startswith("SELECT") or any(cmd in sql_upper for cmd in ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER"]):
+                        st.error("❌ الاستعلام غير آمن. يُسمح فقط باستعلامات SELECT.")
                     else:
                         try:
                             engine = create_engine(sql_db_url)
