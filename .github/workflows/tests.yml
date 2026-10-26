@@ -18,9 +18,8 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pytest polars pandas numpy sqlalchemy streamlit
+        pip install pytest polars pandas numpy sqlalchemy streamlit prophet weasyprint openpyxl
         pip install -r requirements.txt || true
-    - name: Test with pytest
+    - name: Run Pytest
       run: |
-        # اختبار بسيط جداً للتأكد من أن الكود الأساسي يعمل
-        python -c "from core_engine import DataEngine; print('Import OK')"
+        pytest tests/ test_app.py -v
