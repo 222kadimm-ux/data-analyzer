@@ -3,7 +3,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from .base import BaseConnector
 
-# قائمة الجداول المسموح بها (لا تشمل users لأسباب أمنية)
+# التعديل: إزالة جدول users لأسباب أمنية
 ALLOWED_TABLES = ["production_data", "sales_data"]
 
 class SQLDatabaseConnector(BaseConnector):
