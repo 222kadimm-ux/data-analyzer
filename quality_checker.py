@@ -11,7 +11,6 @@ class DataQualityChecker:
         self.issues = []
         self.score = 100
 
-        # 1. فحص القيم الفارغة
         null_counts = self.df.null_count().to_dicts()[0]
         for col, count in null_counts.items():
             if count > 0:
@@ -20,7 +19,6 @@ class DataQualityChecker:
                     self.issues.append(f"⚠️ العمود '{col}' يحتوي على {percentage:.1f}% قيم فارغة.")
                     self.score -= 10
 
-        # 2. فحص القيم السالبة
         numeric_cols = [c for c in self.df.columns if self.df[c].dtype in [pl.Float64, pl.Int64]]
         for col in numeric_cols:
             negatives = self.df.filter(pl.col(col) < 0).height
@@ -28,13 +26,11 @@ class DataQualityChecker:
                 self.issues.append(f"⚠️ العمود '{col}' يحتوي على {negatives} قيماً سالبة.")
                 self.score -= 5
 
-        # 3. فحص التواريخ
         date_cols = [c for c in self.df.columns if 'date' in c.lower() or 'mois' in c.lower()]
         if not date_cols:
             self.issues.append("⚠️ لا يوجد عمود تاريخ. التنبؤ لن يعمل.")
             self.score -= 20
 
-        # 4. فحص التكرارات
         duplicates = self.df.height - self.df.unique().height
         if duplicates > 0:
             self.issues.append(f"⚠️ يوجد {duplicates} صفوف مكررة.")
@@ -51,26 +47,16 @@ class DataQualityChecker:
         else:
             return f"🔴 **جودة البيانات ضعيفة ({score}/100)**.", issues
 
-    # دالة الإصلاح التلقائي
-    def auto_fix(self):
+    # إصلاح: عرض معاينة وإرجاع نسخة جديدة (وليس الحذف التلقائي)
+    def get_fix_preview(self):
         df = self.df.clone()
+        # حذف التكرارات
+        df_unique = df.unique()
+        removed = df.height - df_unique.height
         
-        # 1. حذف التكرارات
-        df = df.unique()
-        
-        # 2. ملء القيم الفارغة (فقط للأعمدة غير الحرجة)
-        critical_cols = ['Planned_Time_Mins', 'Downtime_Mins', 'Total_Count', 'Good_Count']
-        
-        numeric_cols = [c for c in df.columns if df[c].dtype in [pl.Float64, pl.Int64]]
-        for col in numeric_cols:
-            if col not in critical_cols:
-                mean_val = df[col].mean()
-                if mean_val is not None:
-                    df = df.with_columns(pl.col(col).fill_null(mean_val))
-        
-        # 3. ملء القيم النصية الفارغة
-        str_cols = [c for c in df.columns if df[c].dtype == pl.Utf8]
+        # ملء القيم النصية فقط (وليس الرقمية)
+        str_cols = [c for c in df_unique.columns if df_unique[c].dtype == pl.Utf8]
         for col in str_cols:
-            df = df.with_columns(pl.col(col).fill_null("Inconnu"))
+            df_unique = df_unique.with_columns(pl.col(col).fill_null("Inconnu"))
             
-        return df
+        return df_unique, removed
