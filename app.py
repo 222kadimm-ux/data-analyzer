@@ -140,7 +140,14 @@ def load_from_gsheets(sheet_url):
 def load_from_sql(db_url, table_name, limit=10000):
     try:
         engine = create_engine(db_url)
-        df_pd = pd.read_sql(f"SELECT * FROM {table_name} LIMIT {limit};", engine)
+        # تأمين استعلام SQL: نستخدم اسم الجدول كمعامل (وليس كنص مباشر)
+        # ولكن SQLAlchemy لا يدعم هذا مباشرة، لذلك سنستخدم text() مع التحقق
+        from sqlalchemy import text
+        # التحقق من اسم الجدول (يجب أن يكون حروفاً وأرقاماً فقط)
+        if not table_name.isalnum():
+            return None
+        query = text(f"SELECT * FROM {table_name} LIMIT {limit}")
+        df_pd = pd.read_sql(query, engine)
         return pl.from_pandas(df_pd)
     except: return None
 
@@ -235,14 +242,13 @@ if st.session_state.show_security:
     st.stop()
 
 # ==========================================
-# 6. الواجهة الرئيسية (تم تبسيطها)
+# 6. الواجهة الرئيسية
 # ==========================================
 st.title(t["title"])
 st.write("Solution professionnelle pour l'analyse des données industrielles." if st.session_state.lang == "FR" else ("Professional solution for industrial data analysis." if st.session_state.lang == "EN" else "حل احترافي لتحليل بيانات المصانع والشركات."))
 
 st.divider()
 
-# التبويبات الأساسية (5 فقط)
 tab_upload, tab_dashboard, tab_oee, tab_forecast, tab_ai, tab_advanced = st.tabs([
     t["upload_tab"], 
     t["dashboard_tab"], 
@@ -252,21 +258,24 @@ tab_upload, tab_dashboard, tab_oee, tab_forecast, tab_ai, tab_advanced = st.tabs
     t["advanced_tab"]
 ])
 
-# --- 1. رفع البيانات ---
+# --- 1. رفع البيانات (الإصلاح: فحص الجودة قبل الحذف) ---
 with tab_upload:
     uploaded_file = st.file_uploader(t["file_upload"], type=["xlsx", "csv"])
     if uploaded_file:
         if uploaded_file.size > 100 * 1024 * 1024: st.error("🚫 Limite 100MB."); st.stop()
         with st.spinner("..."):
             try:
+                # 1. قراءة الملف (بدون حذف أي شيء)
                 df = pl.read_csv(uploaded_file, infer_schema_length=10000, ignore_errors=True) if uploaded_file.name.endswith('.csv') else pl.read_excel(uploaded_file)
-                df = df.drop_nulls().unique()
+                
+                # 2. فحص الجودة على البيانات الأصلية
+                checker = DataQualityChecker(df)
+                report_msg, issues = checker.get_report()
+                
+                # 3. حفظ البيانات الأصلية
                 st.session_state.df = df
                 save_file(current_user, uploaded_file.name, df.head(5000).to_pandas() if df.height > 5000 else df.to_pandas())
                 st.success(f"✅ Importé avec succès! ({df.height:,})")
-                
-                checker = DataQualityChecker(df)
-                report_msg, issues = checker.get_report()
                 
                 if issues:
                     st.warning(report_msg)
