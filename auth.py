@@ -1,7 +1,5 @@
 import streamlit as st
 import bcrypt
-import json
-import time
 from database import get_db_connection, get_user_role
 
 def create_user(email, password):
@@ -9,8 +7,8 @@ def create_user(email, password):
     cur = conn.cursor()
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     
-    # تحديد الدور: إذا كان بريد المدير، اجعله admin
-    role = "admin" if email == st.secrets["ADMIN_EMAIL"] else "user"
+    # التعديل: جميع المستخدمين الجدد "user" فقط. ترقية المدير تتم يدوياً من قاعدة البيانات.
+    role = "user"
     
     try:
         cur.execute("INSERT INTO users (email, password_hash, role) VALUES (%s, %s, %s)", (email, hashed, role))
