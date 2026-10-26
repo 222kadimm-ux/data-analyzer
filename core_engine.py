@@ -19,18 +19,30 @@ class DataEngine:
             return None, "Colonnes OEE manquantes"
         
         try:
+            # 1. التحقق من القيم السالبة
+            if (df[req] < 0).any().any():
+                return None, "⚠️ البيانات تحتوي على قيم سالبة. يرجى تصحيح الملف."
+
+            # 2. منع القسمة على صفر
             df['Run_Time'] = df['Planned_Time_Mins'] - df['Downtime_Mins']
+            df['Run_Time'] = df['Run_Time'].replace(0, 1) 
+            
             df['Availability'] = df['Run_Time'] / df['Planned_Time_Mins']
+            
             df['Ideal_Time'] = (df['Total_Count'] * df['Ideal_Cycle_Time_Sec']) / 60
             df['Performance'] = df['Ideal_Time'] / df['Run_Time']
-            df['Quality'] = df['Good_Count'] / df['Total_Count']
+            
+            df['Quality'] = df['Good_Count'] / df['Total_Count'].replace(0, 1)
+            
             df['OEE'] = df['Availability'] * df['Performance'] * df['Quality']
             
+            # 3. التحقق من المنطقية
             perf = df['Performance'].mean() * 100
             warning = None
-            # التحقق الذكي: إذا كان الأداء أقل من 50%، فهناك خطأ في البيانات
             if perf < 50:
-                warning = "⚠️ الأداء منخفض جداً (أقل من 50%). يرجى التأكد من أن العمود 'Ideal_Cycle_Time_Sec' بالثواني (وليس بالدقائق)."
+                warning = "⚠️ الأداء منخفض جداً (أقل من 50%). يرجى التأكد من أن العمود 'Ideal_Cycle_Time_Sec' بالثواني، وأن 'Total_Count' يعكس الإنتاج الفعلي."
+            if df['OEE'].mean() > 100:
+                warning = "⚠️ OEE أكبر من 100% (غير منطقي). تأكد من أن Planned_Time_Mins أكبر من Downtime_Mins."
             
             result = {
                 "availability": df['Availability'].mean() * 100,
@@ -74,5 +86,4 @@ def fetch_shopify_data(shop_url, api_key, password):
             })
         shopify.ShopifyResource.clear_session()
         return pl.from_pandas(pd.DataFrame(data)) if data else None
-    except:
-        return None
+    except: return None
