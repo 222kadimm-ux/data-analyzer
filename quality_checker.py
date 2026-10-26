@@ -58,14 +58,17 @@ class DataQualityChecker:
         # 1. حذف التكرارات
         df = df.unique()
         
-        # 2. ملء القيم الفارغة الرقمية بالمتوسط
+        # 2. ملء القيم الفارغة (فقط للأعمدة غير الحرجة)
+        critical_cols = ['Planned_Time_Mins', 'Downtime_Mins', 'Total_Count', 'Good_Count']
+        
         numeric_cols = [c for c in df.columns if df[c].dtype in [pl.Float64, pl.Int64]]
         for col in numeric_cols:
-            mean_val = df[col].mean()
-            if mean_val is not None:
-                df = df.with_columns(pl.col(col).fill_null(mean_val))
+            if col not in critical_cols:
+                mean_val = df[col].mean()
+                if mean_val is not None:
+                    df = df.with_columns(pl.col(col).fill_null(mean_val))
         
-        # 3. ملء القيم الفارغة النصية بكلمة "Inconnu"
+        # 3. ملء القيم النصية الفارغة
         str_cols = [c for c in df.columns if df[c].dtype == pl.Utf8]
         for col in str_cols:
             df = df.with_columns(pl.col(col).fill_null("Inconnu"))
