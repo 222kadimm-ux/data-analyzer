@@ -14,7 +14,7 @@ from google.oauth2.service_account import Credentials
 from sqlalchemy import create_engine
 from database import init_db, save_file, get_files, delete_file, get_db_connection
 from auth import create_user, verify_user, login_user, logout_user
-from core_engine import DataEngine, fetch_shopify_data
+from core_engine import DataEngine
 from ai_engine import AIAssistant
 from pdf_exporter import PDFExporter
 from quality_checker import DataQualityChecker
@@ -141,12 +141,30 @@ def load_from_sql(db_url, table_name, limit=10000):
     try:
         engine = create_engine(db_url)
         from sqlalchemy import text
-        # تأمين اسم الجدول (حروف وأرقام فقط)
         if not table_name.isalnum():
             return None
         query = text(f"SELECT * FROM {table_name} LIMIT {limit}")
         df_pd = pd.read_sql(query, engine)
         return pl.from_pandas(df_pd)
+    except: return None
+
+# دالة Shopify المضمنة (لإصلاح ImportError)
+def fetch_shopify_data(shop_url, api_key, password):
+    import shopify
+    try:
+        session = shopify.Session(shop_url, '2024-01', password)
+        shopify.ShopifyResource.activate_session(session)
+        orders = shopify.Order.find(limit=50)
+        data = []
+        for order in orders:
+            data.append({
+                'Date': order.created_at,
+                'Total_Price': float(order.total_price),
+                'Customer_Email': order.email,
+                'Order_ID': order.id
+            })
+        shopify.ShopifyResource.clear_session()
+        return pl.from_pandas(pd.DataFrame(data)) if data else None
     except: return None
 
 def delete_my_account(email):
@@ -256,7 +274,7 @@ tab_upload, tab_dashboard, tab_oee, tab_forecast, tab_ai, tab_advanced = st.tabs
     t["advanced_tab"]
 ])
 
-# --- 1. رفع البيانات (فاحص الجودة يعمل قبل الحذف) ---
+# --- 1. رفع البيانات ---
 with tab_upload:
     uploaded_file = st.file_uploader(t["file_upload"], type=["xlsx", "csv"])
     if uploaded_file:
@@ -288,7 +306,7 @@ with tab_upload:
                     st.success(report_msg)
             except Exception as e: st.error(f"❌ {e}")
 
-# --- 2. لوحة التحكم (إصلاح: عرض إحصائيات لكل الأعمدة) ---
+# --- 2. لوحة التحكم ---
 with tab_dashboard:
     if st.session_state.df is None: st.info(t["no_data"])
     else:
@@ -396,7 +414,6 @@ with tab_advanced:
                     generated_sql = ai_assistant.generate_sql(sql_question, sql_table)
                     st.code(generated_sql, language="sql")
                     
-                    # تأمين SQL
                     sql_upper = generated_sql.strip().upper()
                     if not sql_upper.startswith("SELECT") or any(cmd in sql_upper for cmd in ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER"]):
                         st.error("❌ الاستعلام غير آمن. يُسمح فقط باستعلامات SELECT.")
