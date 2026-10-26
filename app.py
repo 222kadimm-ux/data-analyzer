@@ -140,10 +140,8 @@ def load_from_gsheets(sheet_url):
 def load_from_sql(db_url, table_name, limit=10000):
     try:
         engine = create_engine(db_url)
-        # تأمين استعلام SQL: نستخدم اسم الجدول كمعامل (وليس كنص مباشر)
-        # ولكن SQLAlchemy لا يدعم هذا مباشرة، لذلك سنستخدم text() مع التحقق
         from sqlalchemy import text
-        # التحقق من اسم الجدول (يجب أن يكون حروفاً وأرقاماً فقط)
+        # تأمين اسم الجدول (حروف وأرقام فقط)
         if not table_name.isalnum():
             return None
         query = text(f"SELECT * FROM {table_name} LIMIT {limit}")
@@ -258,21 +256,18 @@ tab_upload, tab_dashboard, tab_oee, tab_forecast, tab_ai, tab_advanced = st.tabs
     t["advanced_tab"]
 ])
 
-# --- 1. رفع البيانات (الإصلاح: فحص الجودة قبل الحذف) ---
+# --- 1. رفع البيانات (فاحص الجودة يعمل قبل الحذف) ---
 with tab_upload:
     uploaded_file = st.file_uploader(t["file_upload"], type=["xlsx", "csv"])
     if uploaded_file:
         if uploaded_file.size > 100 * 1024 * 1024: st.error("🚫 Limite 100MB."); st.stop()
         with st.spinner("..."):
             try:
-                # 1. قراءة الملف (بدون حذف أي شيء)
                 df = pl.read_csv(uploaded_file, infer_schema_length=10000, ignore_errors=True) if uploaded_file.name.endswith('.csv') else pl.read_excel(uploaded_file)
                 
-                # 2. فحص الجودة على البيانات الأصلية
                 checker = DataQualityChecker(df)
                 report_msg, issues = checker.get_report()
                 
-                # 3. حفظ البيانات الأصلية
                 st.session_state.df = df
                 save_file(current_user, uploaded_file.name, df.head(5000).to_pandas() if df.height > 5000 else df.to_pandas())
                 st.success(f"✅ Importé avec succès! ({df.height:,})")
@@ -396,13 +391,18 @@ with tab_advanced:
                 with st.spinner("..."):
                     generated_sql = ai_assistant.generate_sql(sql_question, sql_table)
                     st.code(generated_sql, language="sql")
-                    try:
-                        engine = create_engine(sql_db_url)
-                        result_df = pd.read_sql(generated_sql, engine)
-                        st.success(f"✅ ({len(result_df)})")
-                        st.dataframe(result_df)
-                    except Exception as e:
-                        st.error(f"❌ {e}")
+                    
+                    # تأمين SQL: يجب أن يبدأ بـ SELECT
+                    if not generated_sql.strip().upper().startswith("SELECT"):
+                        st.error("❌ الاستعلام غير آمن. يجب أن يبدأ بـ SELECT.")
+                    else:
+                        try:
+                            engine = create_engine(sql_db_url)
+                            result_df = pd.read_sql(generated_sql, engine)
+                            st.success(f"✅ ({len(result_df)})")
+                            st.dataframe(result_df)
+                        except Exception as e:
+                            st.error(f"❌ {e}")
             else:
                 st.warning("Fill all fields / املأ الحقول")
 
