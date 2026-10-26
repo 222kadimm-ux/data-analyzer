@@ -253,11 +253,9 @@ with tab_upload:
     if uploaded_file:
         with st.spinner("..."):
             try:
-                # استخدام موصل CSV/Excel الجديد
                 connector = CSVExcelConnector(uploaded_file)
                 df = connector.load_data()
                 
-                # التحقق من صحة البيانات
                 validator = SchemaValidator(df)
                 is_valid_oee, msg_oee = validator.validate_oee_columns()
                 
