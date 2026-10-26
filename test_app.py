@@ -21,9 +21,7 @@ def test_calculate_oee_valid():
     
     assert error is None
     assert result is not None
-    # التحقق من الإتاحة (93.75%)
     assert result['availability'] == pytest.approx(93.75, 0.1)
-    # التحقق من الجودة (96.66%)
     assert result['quality'] == pytest.approx(96.66, 0.1)
 
 def test_oee_zero_planned_time():
@@ -42,15 +40,13 @@ def test_oee_zero_planned_time():
 def test_oee_zero_run_time():
     df = pl.DataFrame({
         'Planned_Time_Mins': [480],
-        'Downtime_Mins': [480], # توقف كامل
+        'Downtime_Mins': [480],
         'Ideal_Cycle_Time_Sec': [1.0],
         'Total_Count': [1500],
         'Good_Count': [1450]
     })
     engine = DataEngine(df)
     result, error = engine.calculate_oee()
-    
-    # الكود الجديد يرفض الحساب إذا كان وقت التشغيل صفراً
     assert result is None
     assert "توقف كامل" in error
 
@@ -73,7 +69,7 @@ def test_oee_good_count_exceeds_total():
         'Downtime_Mins': [30],
         'Ideal_Cycle_Time_Sec': [1.0],
         'Total_Count': [1500],
-        'Good_Count': [1600] # أكبر من الإجمالي
+        'Good_Count': [1600]
     })
     engine = DataEngine(df)
     result, error = engine.calculate_oee()
@@ -120,6 +116,9 @@ class MockFile:
         self.name = name
         self.content = content
         self.size = len(content)
+        
+    def read(self, *args, **kwargs):
+        return self.content
 
 def test_csv_connector_valid():
     csv_content = b"Date,Sales\n2026-01-01,100\n2026-01-02,200"
@@ -130,7 +129,6 @@ def test_csv_connector_valid():
     assert df.columns == ["Date", "Sales"]
 
 def test_csv_connector_too_large():
-    # اختبار ملف كبير جداً (101 ميجابايت)
     mock_file = MockFile("large.csv", b"x" * 101 * 1024 * 1024)
     connector = CSVExcelConnector(mock_file)
     with pytest.raises(ValueError, match="الحد الأقصى"):
