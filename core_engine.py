@@ -21,83 +21,63 @@ class DataEngine:
         if not all(c in df.columns for c in req):
             return None, "Colonnes OEE manquantes"
         
+        warnings = []
         try:
             # 1. التحقق من القيم غير المنطقية
-            if (df['Planned_Time_Mins'] == 0).any():
-                return None, "⚠️ الوقت المخطط لا يمكن أن يكون صفراً."
+            if (df['Planned_Time_Mins'] <= 0).any():
+                return None, "⚠️ الوقت المخطط يجب أن يكون أكبر من صفر."
             if (df['Downtime_Mins'] > df['Planned_Time_Mins']).any():
                 return None, "⚠️ وقت التوقف أكبر من الوقت المخطط."
             if (df['Good_Count'] > df['Total_Count']).any():
                 return None, "⚠️ عدد القطع السليمة أكبر من إجمالي القطع."
             if (df[req] < 0).any().any():
                 return None, "⚠️ البيانات تحتوي على قيم سالبة."
-
-            # 2. الحسابات
+            
+            # 2. معالجة وقت التشغيل الصفري (بدون اختراع أرقام)
             df['Run_Time'] = df['Planned_Time_Mins'] - df['Downtime_Mins']
-            df['Run_Time'] = df['Run_Time'].replace(0, 1) # منع القسمة على صفر
             
-            df['Availability'] = df['Run_Time'] / df['Planned_Time_Mins']
+            # إذا كان وقت التشغيل صفراً، الإتاحة = 0 (وليس 1)
+            df['Availability'] = np.where(
+                df['Run_Time'] == 0, 0, 
+                df['Run_Time'] / df['Planned_Time_Mins']
+            )
             
+            # إذا كان وقت التشغيل صفراً، لا يمكن حساب الأداء (نضعه 0 مع تحذير)
             df['Ideal_Time'] = (df['Total_Count'] * df['Ideal_Cycle_Time_Sec']) / 60
-            df['Performance'] = df['Ideal_Time'] / df['Run_Time']
+            df['Performance'] = np.where(
+                df['Run_Time'] == 0, 0,
+                df['Ideal_Time'] / df['Run_Time']
+            )
             
-            df['Quality'] = df['Good_Count'] / df['Total_Count'].replace(0, 1)
+            if (df['Run_Time'] == 0).any():
+                warnings.append("⚠️ بعض الصفوف بها وقت تشغيل صفر (توقف كامل). تم اعتبار الإتاحة والأداء 0 لهذه الصفوف.")
+
+            # 3. الجودة (معالجة إجمالي القطع = 0)
+            df['Quality'] = np.where(
+                df['Total_Count'] == 0, 0,
+                df['Good_Count'] / df['Total_Count']
+            )
             
             df['OEE'] = df['Availability'] * df['Performance'] * df['Quality']
             
-            # 3. معالجة NaN (القيم غير المحددة)
-            # نستخدم np.nan_to_num لتحويل أي NaN إلى 0
+            # 4. معالجة NaN
             availability = float(np.nan_to_num(df['Availability'].mean() * 100, nan=0.0))
             performance = float(np.nan_to_num(df['Performance'].mean() * 100, nan=0.0))
             quality = float(np.nan_to_num(df['Quality'].mean() * 100, nan=0.0))
             oee = float(np.nan_to_num(df['OEE'].mean() * 100, nan=0.0))
             
-            warning = None
             if performance < 50:
-                warning = "⚠️ الأداء منخفض جداً (أقل من 50%). يرجى التأكد من أن العمود 'Ideal_Cycle_Time_Sec' بالثواني، وأن 'Total_Count' يعكس الإنتاج الفعلي."
+                warnings.append("⚠️ الأداء منخفض جداً (أقل من 50%). يرجى التأكد من الوحدات.")
             if oee > 100:
-                warning = "⚠️ OEE أكبر من 100% (غير منطقي). تأكد من أن Planned_Time_Mins أكبر من Downtime_Mins."
+                warnings.append("⚠️ OEE أكبر من 100% (غير منطقي). تحقق من المدخلات.")
             
             result = {
                 "availability": availability,
                 "performance": performance,
                 "quality": quality,
                 "oee": oee,
-                "warning": warning
+                "warning": " | ".join(warnings) if warnings else None
             }
             return result, None
         except Exception as e:
             return None, str(e)
-
-    def generate_forecast(self, date_col, value_col, periods=3):
-        from prophet import Prophet
-        try:
-            prophet_df = self.df.to_pandas()[[date_col, value_col]].copy()
-            prophet_df.columns = ['ds', 'y']
-            prophet_df['ds'] = pd.to_datetime(prophet_df['ds'], errors='coerce')
-            prophet_df = prophet_df.dropna(subset=['ds']).groupby('ds').sum().reset_index()
-            m = Prophet()
-            m.fit(prophet_df)
-            future = m.make_future_dataframe(periods=periods, freq='ME')
-            forecast = m.predict(future)
-            return m, forecast, None
-        except Exception as e:
-            return None, None, str(e)
-
-def fetch_shopify_data(shop_url, api_key, password):
-    import shopify
-    try:
-        session = shopify.Session(shop_url, '2024-01', password)
-        shopify.ShopifyResource.activate_session(session)
-        orders = shopify.Order.find(limit=50)
-        data = []
-        for order in orders:
-            data.append({
-                'Date': order.created_at,
-                'Total_Price': float(order.total_price),
-                'Customer_Email': order.email,
-                'Order_ID': order.id
-            })
-        shopify.ShopifyResource.clear_session()
-        return pl.from_pandas(pd.DataFrame(data)) if data else None
-    except: return None
