@@ -25,25 +25,22 @@ class AIAssistant:
             response.raise_for_status()
             return response.json()['choices'][0]['message']['content']
         except requests.exceptions.Timeout:
-            return "⚠️ انتهت مهلة الاتصال بالذكاء الاصطناعي. يرجى المحاولة مرة أخرى."
+            return "⚠️ انتهت مهلة الاتصال بالذكاء الاصطناعي."
         except Exception as e:
             return f"Error: {e}"
 
     def generate_report(self, df_polars, lang="FR"):
+        # إصلاح: استخدام df_polars بدلاً من df_polar
         df_pandas = df_polars.head(1000).to_pandas()
         stats = df_pandas.describe().to_string()
         prompt = f"""
-        Tu es un analyste de données senior et un expert en optimisation industrielle.
-        Voici les statistiques de production des données fournies:
+        Tu es un analyste de données senior. 
+        Voici les statistiques:
         {stats}
-        
-        Ta mission:
-        1. Commence par UNE SEULE phrase de recommandation actionnable et directe.
-        2. Rédige ensuite un rapport synthétique (maximum 200 mots) en {'Français' if lang == 'FR' else 'Arabe'}.
-        3. Termine par 2 autres recommandations courtes et actionnables.
+        Donne un rapport de 200 mots et 3 recommandations en {'Français' if lang == 'FR' else 'Arabe'}.
         """
         return self._call_api(prompt)
 
     def generate_sql(self, question, table_name):
-        prompt = f"Génère une requête SQL (SELECT) pour la table `{table_name}`.\nQuestion: {question}\nRéponds uniquement avec le code SQL sans markdown."
+        prompt = f"Génère une requête SQL (SELECT) pour la table `{table_name}`.\nQuestion: {question}\nRéponds uniquement avec le code SQL."
         return self._call_api(prompt)
