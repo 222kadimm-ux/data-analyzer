@@ -11,13 +11,16 @@ import extra_streamlit_components as stx
 import numpy as np
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
-from sqlalchemy import create_engine
 from database import init_db, save_file, get_files, delete_file, get_db_connection
 from auth import create_user, verify_user, login_user, logout_user
 from core_engine import DataEngine
 from ai_engine import AIAssistant
 from pdf_exporter import PDFExporter
 from quality_checker import DataQualityChecker
+from validation.schema import SchemaValidator
+from connectors.csv_excel import CSVExcelConnector
+from connectors.sql_database import SQLDatabaseConnector
+from connectors.rest_api import RESTAPIConnector
 
 # ==========================================
 # 1. إعدادات الصفحة
@@ -137,36 +140,6 @@ def load_from_gsheets(sheet_url):
         return pl.from_pandas(pd.DataFrame(data)) if data else None
     except: return None
 
-def load_from_sql(db_url, table_name, limit=10000):
-    try:
-        engine = create_engine(db_url)
-        from sqlalchemy import text
-        if not table_name.isalnum():
-            return None
-        query = text(f"SELECT * FROM {table_name} LIMIT {limit}")
-        df_pd = pd.read_sql(query, engine)
-        return pl.from_pandas(df_pd)
-    except: return None
-
-# دالة Shopify المضمنة (لإصلاح ImportError)
-def fetch_shopify_data(shop_url, api_key, password):
-    import shopify
-    try:
-        session = shopify.Session(shop_url, '2024-01', password)
-        shopify.ShopifyResource.activate_session(session)
-        orders = shopify.Order.find(limit=50)
-        data = []
-        for order in orders:
-            data.append({
-                'Date': order.created_at,
-                'Total_Price': float(order.total_price),
-                'Customer_Email': order.email,
-                'Order_ID': order.id
-            })
-        shopify.ShopifyResource.clear_session()
-        return pl.from_pandas(pd.DataFrame(data)) if data else None
-    except: return None
-
 def delete_my_account(email):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -274,14 +247,19 @@ tab_upload, tab_dashboard, tab_oee, tab_forecast, tab_ai, tab_advanced = st.tabs
     t["advanced_tab"]
 ])
 
-# --- 1. رفع البيانات ---
+# --- 1. رفع البيانات (باستخدام الموصلات) ---
 with tab_upload:
     uploaded_file = st.file_uploader(t["file_upload"], type=["xlsx", "csv"])
     if uploaded_file:
-        if uploaded_file.size > 100 * 1024 * 1024: st.error("🚫 Limite 100MB."); st.stop()
         with st.spinner("..."):
             try:
-                df = pl.read_csv(uploaded_file, infer_schema_length=10000, ignore_errors=True) if uploaded_file.name.endswith('.csv') else pl.read_excel(uploaded_file)
+                # استخدام موصل CSV/Excel الجديد
+                connector = CSVExcelConnector(uploaded_file)
+                df = connector.load_data()
+                
+                # التحقق من صحة البيانات
+                validator = SchemaValidator(df)
+                is_valid_oee, msg_oee = validator.validate_oee_columns()
                 
                 checker = DataQualityChecker(df)
                 report_msg, issues = checker.get_report()
@@ -297,13 +275,14 @@ with tab_upload:
                     
                     if st.button("🛠️ Réparer les données automatiquement / إصلاح البيانات تلقائياً"):
                         with st.spinner("..."):
-                            fixed_df, removed = checker.get_fix_preview()
+                            fixed_df, changes = checker.get_fix_preview()
                             st.session_state.df = fixed_df
                             save_file(current_user, uploaded_file.name + "_fixed", fixed_df.head(5000).to_pandas())
-                            st.success(f"✅ Données réparées avec succès! ({removed} doublons supprimés)")
+                            st.success(f"✅ Données réparées avec succès! ({', '.join(changes)})")
                             st.rerun()
                 else:
                     st.success(report_msg)
+                    
             except Exception as e: st.error(f"❌ {e}")
 
 # --- 2. لوحة التحكم ---
@@ -397,51 +376,43 @@ with tab_ai:
         if st.button("Envoyer / إرسال / Send"):
             if question: st.success(ai_assistant._call_api(question))
 
-# --- 6. الخيارات المتقدمة (SQL, Shopify, Live) ---
+# --- 6. الخيارات المتقدمة (SQL, API, Live) ---
 with tab_advanced:
     st.subheader("⚙️ Outils Avancés / خيارات متقدمة")
-    adv_option = st.radio("Choisir l'outil / اختر الأداة:", ["SQL Query", "Shopify", "Live Stream"])
+    adv_option = st.radio("Choisir l'outil / اختر الأداة:", ["SQL Query", "REST API", "Live Stream"])
     
     if adv_option == "SQL Query":
         st.info("💡 Contactez votre service IT pour obtenir l'URL." if st.session_state.lang != "AR" else "💡 اتصل بقسم تقنية المعلومات.")
         sql_db_url = st.text_input("URL (postgresql://...)", type="password", key="sql_db")
         sql_table = st.text_input("Table:", key="sql_table")
-        sql_question = st.text_input("Question:", key="sql_q")
         
-        if st.button("Générer et exécuter / توليد وتنفيذ"):
-            if sql_db_url and sql_table and sql_question:
+        if st.button("Import / سحب"):
+            if sql_db_url and sql_table:
                 with st.spinner("..."):
-                    generated_sql = ai_assistant.generate_sql(sql_question, sql_table)
-                    st.code(generated_sql, language="sql")
-                    
-                    sql_upper = generated_sql.strip().upper()
-                    if not sql_upper.startswith("SELECT") or any(cmd in sql_upper for cmd in ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER"]):
-                        st.error("❌ الاستعلام غير آمن. يُسمح فقط باستعلامات SELECT.")
-                    else:
-                        try:
-                            engine = create_engine(sql_db_url)
-                            result_df = pd.read_sql(generated_sql, engine)
-                            st.success(f"✅ ({len(result_df)})")
-                            st.dataframe(result_df)
-                        except Exception as e:
-                            st.error(f"❌ {e}")
-            else:
-                st.warning("Fill all fields / املأ الحقول")
-
-    elif adv_option == "Shopify":
-        st.info("💡 Connectez votre boutique Shopify / اربط متجرك")
-        shop_url = st.text_input("Shop URL:")
-        api_key = st.text_input("API Key:", type="password")
-        password = st.text_input("API Password:", type="password")
-        if st.button("Fetch Shopify Data / جلب البيانات"):
-            if shop_url and api_key and password:
-                with st.spinner("..."):
-                    df = fetch_shopify_data(shop_url, api_key, password)
-                    if df is not None:
+                    try:
+                        connector = SQLDatabaseConnector(sql_db_url, sql_table)
+                        df = connector.load_data()
                         st.session_state.df = df
-                        save_file(current_user, "Shopify_Data", df.to_pandas())
-                        st.success("✅ Shopify Data Imported!")
-                    else: st.error("❌ Failed to connect to Shopify.")
+                        save_file(current_user, "SQL_Data", df.to_pandas())
+                        st.success(f"✅ ({df.height})")
+                    except Exception as e:
+                        st.error(f"❌ {e}")
+
+    elif adv_option == "REST API":
+        st.info("💡 Connectez une API REST (ex: Shopify, ERP) / اربط API")
+        api_url = st.text_input("API URL:")
+        
+        if st.button("Fetch API Data / جلب البيانات"):
+            if api_url:
+                with st.spinner("..."):
+                    try:
+                        connector = RESTAPIConnector(api_url)
+                        df = connector.load_data()
+                        st.session_state.df = df
+                        save_file(current_user, "API_Data", df.to_pandas())
+                        st.success(f"✅ ({df.height})")
+                    except Exception as e:
+                        st.error(f"❌ {e}")
 
     elif adv_option == "Live Stream":
         st.subheader("📈 Analyse en Direct / التحليل اللحظي")
