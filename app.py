@@ -11,6 +11,7 @@ import extra_streamlit_components as stx
 import numpy as np
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
+from sqlalchemy import create_engine
 from database import init_db, save_file, get_files, delete_file, get_db_connection
 from auth import create_user, verify_user, login_user, logout_user
 from core_engine import DataEngine
@@ -21,6 +22,7 @@ from validation.schema import SchemaValidator
 from connectors.csv_excel import CSVExcelConnector
 from connectors.sql_database import SQLDatabaseConnector
 from connectors.rest_api import RESTAPIConnector
+from connectors.opcua_connector import OPCUAConnector # استيراد موصل OPC UA
 
 # ==========================================
 # 1. إعدادات الصفحة
@@ -247,7 +249,7 @@ tab_upload, tab_dashboard, tab_oee, tab_forecast, tab_ai, tab_advanced = st.tabs
     t["advanced_tab"]
 ])
 
-# --- 1. رفع البيانات (باستخدام الموصلات) ---
+# --- 1. رفع البيانات ---
 with tab_upload:
     uploaded_file = st.file_uploader(t["file_upload"], type=["xlsx", "csv"])
     if uploaded_file:
@@ -374,10 +376,10 @@ with tab_ai:
         if st.button("Envoyer / إرسال / Send"):
             if question: st.success(ai_assistant._call_api(question))
 
-# --- 6. الخيارات المتقدمة (SQL, API, Live) ---
+# --- 6. الخيارات المتقدمة (SQL, API, OPC UA, Live) ---
 with tab_advanced:
     st.subheader("⚙️ Outils Avancés / خيارات متقدمة")
-    adv_option = st.radio("Choisir l'outil / اختر الأداة:", ["SQL Query", "REST API", "Live Stream"])
+    adv_option = st.radio("Choisir l'outil / اختر الأداة:", ["SQL Query", "REST API", "OPC UA", "Live Stream"])
     
     if adv_option == "SQL Query":
         st.info("💡 Contactez votre service IT pour obtenir l'URL." if st.session_state.lang != "AR" else "💡 اتصل بقسم تقنية المعلومات.")
@@ -409,6 +411,24 @@ with tab_advanced:
                         st.session_state.df = df
                         save_file(current_user, "API_Data", df.to_pandas())
                         st.success(f"✅ ({df.height})")
+                    except Exception as e:
+                        st.error(f"❌ {e}")
+
+    elif adv_option == "OPC UA":
+        st.info("💡 Connectez un serveur OPC UA (Test) / اربط سيرفر OPC UA")
+        opc_url = st.text_input("OPC UA URL:", value="opc.tcp://opcua.demo-this.com:51210/UA/SampleServer")
+        node_id = st.text_input("Node ID:", value="nsu=http://test.org/UA/Data/;i=10854")
+        
+        if st.button("Fetch OPC UA Data / جلب البيانات"):
+            if opc_url and node_id:
+                with st.spinner("..."):
+                    try:
+                        connector = OPCUAConnector(opc_url, [node_id])
+                        df = connector.load_data()
+                        st.session_state.df = df
+                        save_file(current_user, "OPCUA_Data", df.to_pandas())
+                        st.success(f"✅ ({df.height})")
+                        st.dataframe(df)
                     except Exception as e:
                         st.error(f"❌ {e}")
 
