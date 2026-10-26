@@ -3,6 +3,7 @@ import polars as pl
 from core_engine import DataEngine
 from validation.schema import SchemaValidator
 from connectors.csv_excel import CSVExcelConnector
+from quality_checker import DataQualityChecker
 
 # ==========================================
 # 1. اختبارات محرك OEE
@@ -108,7 +109,17 @@ def test_validate_date_column_missing():
     assert "عمود تاريخ" in msg
 
 # ==========================================
-# 3. اختبارات موصل CSV/Excel
+# 3. اختبارات جودة البيانات (Data Quality)
+# ==========================================
+
+def test_quality_empty_dataframe():
+    df = pl.DataFrame()
+    checker = DataQualityChecker(df)
+    report, issues = checker.get_report()
+    assert "الملف فارغ" in issues[0]
+
+# ==========================================
+# 4. اختبارات موصل CSV/Excel
 # ==========================================
 
 class MockFile:
