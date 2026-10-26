@@ -4,8 +4,8 @@ import requests
 from urllib.parse import urlparse
 from .base import BaseConnector
 
-# قائمة النطاقات المسموح بها (للأمان)
-ALLOWED_DOMAINS = ["jsonplaceholder.typicode.com", "api.example.com"]
+# قائمة النطاقات المسموح بها
+ALLOWED_DOMAINS = ["jsonplaceholder.typicode.com", "dummyjson.com"]
 
 class RESTAPIConnector(BaseConnector):
     def __init__(self, url, headers=None):
@@ -19,20 +19,25 @@ class RESTAPIConnector(BaseConnector):
             raise ValueError(f"❌ النطاق غير مسموح: {parsed.netloc}. النطاقات المسموحة: {', '.join(ALLOWED_DOMAINS)}")
 
         try:
-            # 2. مهلة الاتصال وحدود الحجم
-            response = requests.get(self.url, headers=self.headers, timeout=30, stream=True)
+            # 2. جلب البيانات
+            response = requests.get(self.url, headers=self.headers, timeout=30)
             response.raise_for_status()
-            
-            # 3. قراءة البيانات (بحد أقصى 5 ميجابايت)
-            content = response.content[:5 * 1024 * 1024] # 5MB
             data = response.json()
             
+            # 3. البحث التلقائي عن القائمة داخل الاستجابة
             if isinstance(data, list):
+                # إذا كانت الاستجابة قائمة مباشرة
                 return pl.from_pandas(pd.DataFrame(data))
-            elif isinstance(data, dict) and 'data' in data:
-                return pl.from_pandas(pd.DataFrame(data['data']))
+            elif isinstance(data, dict):
+                # إذا كانت قاموساً، نبحث عن أول قيمة هي قائمة
+                for key, value in data.items():
+                    if isinstance(value, list):
+                        return pl.from_pandas(pd.DataFrame(value))
+                # إذا لم نجد قائمة، نأخذ القاموس نفسه كصف واحد
+                return pl.from_pandas(pd.DataFrame([data]))
             else:
                 raise ValueError("صيغة JSON غير مدعومة")
+                
         except requests.exceptions.Timeout:
             raise ValueError("⚠️ انتهت مهلة الاتصال بالخادم.")
         except Exception as e:
