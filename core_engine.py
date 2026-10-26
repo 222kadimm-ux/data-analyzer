@@ -1,5 +1,6 @@
 import polars as pl
 import pandas as pd
+import numpy as np
 
 class DataEngine:
     def __init__(self, df_polars):
@@ -9,7 +10,6 @@ class DataEngine:
         numeric_cols = [c for c in self.df.columns if self.df[c].dtype in [pl.Float64, pl.Int64]]
         if not numeric_cols:
             return {"records": self.df.height, "details": []}
-        # إصلاح: عرض إحصائيات لكل الأعمدة الرقمية
         details = []
         for col in numeric_cols:
             details.append({"column": col, "total": self.df[col].sum()})
@@ -22,7 +22,7 @@ class DataEngine:
             return None, "Colonnes OEE manquantes"
         
         try:
-            # التحقق من القيم غير المنطقية
+            # 1. التحقق من القيم غير المنطقية
             if (df['Planned_Time_Mins'] == 0).any():
                 return None, "⚠️ الوقت المخطط لا يمكن أن يكون صفراً."
             if (df['Downtime_Mins'] > df['Planned_Time_Mins']).any():
@@ -32,20 +32,38 @@ class DataEngine:
             if (df[req] < 0).any().any():
                 return None, "⚠️ البيانات تحتوي على قيم سالبة."
 
+            # 2. الحسابات
             df['Run_Time'] = df['Planned_Time_Mins'] - df['Downtime_Mins']
+            df['Run_Time'] = df['Run_Time'].replace(0, 1) # منع القسمة على صفر
+            
             df['Availability'] = df['Run_Time'] / df['Planned_Time_Mins']
             
             df['Ideal_Time'] = (df['Total_Count'] * df['Ideal_Cycle_Time_Sec']) / 60
             df['Performance'] = df['Ideal_Time'] / df['Run_Time']
             
-            df['Quality'] = df['Good_Count'] / df['Total_Count']
+            df['Quality'] = df['Good_Count'] / df['Total_Count'].replace(0, 1)
+            
             df['OEE'] = df['Availability'] * df['Performance'] * df['Quality']
             
+            # 3. معالجة NaN (القيم غير المحددة)
+            # نستخدم np.nan_to_num لتحويل أي NaN إلى 0
+            availability = float(np.nan_to_num(df['Availability'].mean() * 100, nan=0.0))
+            performance = float(np.nan_to_num(df['Performance'].mean() * 100, nan=0.0))
+            quality = float(np.nan_to_num(df['Quality'].mean() * 100, nan=0.0))
+            oee = float(np.nan_to_num(df['OEE'].mean() * 100, nan=0.0))
+            
+            warning = None
+            if performance < 50:
+                warning = "⚠️ الأداء منخفض جداً (أقل من 50%). يرجى التأكد من أن العمود 'Ideal_Cycle_Time_Sec' بالثواني، وأن 'Total_Count' يعكس الإنتاج الفعلي."
+            if oee > 100:
+                warning = "⚠️ OEE أكبر من 100% (غير منطقي). تأكد من أن Planned_Time_Mins أكبر من Downtime_Mins."
+            
             result = {
-                "availability": df['Availability'].mean() * 100,
-                "performance": df['Performance'].mean() * 100,
-                "quality": df['Quality'].mean() * 100,
-                "oee": df['OEE'].mean() * 100
+                "availability": availability,
+                "performance": performance,
+                "quality": quality,
+                "oee": oee,
+                "warning": warning
             }
             return result, None
         except Exception as e:
@@ -69,7 +87,6 @@ class DataEngine:
 def fetch_shopify_data(shop_url, api_key, password):
     import shopify
     try:
-        # إصلاح: التأكد من استخدام المتغيرات بشكل صحيح
         session = shopify.Session(shop_url, '2024-01', password)
         shopify.ShopifyResource.activate_session(session)
         orders = shopify.Order.find(limit=50)
