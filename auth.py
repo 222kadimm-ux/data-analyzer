@@ -7,7 +7,7 @@ def create_user(email, password):
     cur = conn.cursor()
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
     
-    # التعديل: جميع المستخدمين الجدد "user" فقط. ترقية المدير تتم يدوياً من قاعدة البيانات.
+    # التعديل: جميع المستخدمين الجدد "user" فقط
     role = "user"
     
     try:
