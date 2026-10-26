@@ -23,7 +23,7 @@ class DataEngine:
         
         warnings = []
         try:
-            # 1. التحقق من القيم غير المنطقية
+            # التحقق من القيم غير المنطقية
             if (df['Planned_Time_Mins'] <= 0).any():
                 return None, "⚠️ الوقت المخطط يجب أن يكون أكبر من صفر."
             if (df['Downtime_Mins'] > df['Planned_Time_Mins']).any():
@@ -33,43 +33,29 @@ class DataEngine:
             if (df[req] < 0).any().any():
                 return None, "⚠️ البيانات تحتوي على قيم سالبة."
             
-            # 2. معالجة وقت التشغيل الصفري (بدون اختراع أرقام)
-            df['Run_Time'] = df['Planned_Time_Mins'] - df['Downtime_Mins']
+            # الحساب من الإجمالي (وليس متوسط النسب)
+            total_planned = df['Planned_Time_Mins'].sum()
+            total_downtime = df['Downtime_Mins'].sum()
+            total_run = total_planned - total_downtime
             
-            # إذا كان وقت التشغيل صفراً، الإتاحة = 0 (وليس 1)
-            df['Availability'] = np.where(
-                df['Run_Time'] == 0, 0, 
-                df['Run_Time'] / df['Planned_Time_Mins']
-            )
+            if total_run <= 0:
+                return None, "⚠️ إجمالي وقت التشغيل صفر (توقف كامل)."
             
-            # إذا كان وقت التشغيل صفراً، لا يمكن حساب الأداء (نضعه 0 مع تحذير)
-            df['Ideal_Time'] = (df['Total_Count'] * df['Ideal_Cycle_Time_Sec']) / 60
-            df['Performance'] = np.where(
-                df['Run_Time'] == 0, 0,
-                df['Ideal_Time'] / df['Run_Time']
-            )
+            availability = (total_run / total_planned) * 100
             
-            if (df['Run_Time'] == 0).any():
-                warnings.append("⚠️ بعض الصفوف بها وقت تشغيل صفر (توقف كامل). تم اعتبار الإتاحة والأداء 0 لهذه الصفوف.")
-
-            # 3. الجودة (معالجة إجمالي القطع = 0)
-            df['Quality'] = np.where(
-                df['Total_Count'] == 0, 0,
-                df['Good_Count'] / df['Total_Count']
-            )
+            total_ideal_time = (df['Total_Count'] * df['Ideal_Cycle_Time_Sec']).sum() / 60
+            performance = (total_ideal_time / total_run) * 100
             
-            df['OEE'] = df['Availability'] * df['Performance'] * df['Quality']
+            total_good = df['Good_Count'].sum()
+            total_count = df['Total_Count'].sum()
+            quality = (total_good / total_count) * 100 if total_count > 0 else 0
             
-            # 4. معالجة NaN
-            availability = float(np.nan_to_num(df['Availability'].mean() * 100, nan=0.0))
-            performance = float(np.nan_to_num(df['Performance'].mean() * 100, nan=0.0))
-            quality = float(np.nan_to_num(df['Quality'].mean() * 100, nan=0.0))
-            oee = float(np.nan_to_num(df['OEE'].mean() * 100, nan=0.0))
+            oee = (availability * performance * quality) / 10000
             
             if performance < 50:
-                warnings.append("⚠️ الأداء منخفض جداً (أقل من 50%). يرجى التأكد من الوحدات.")
+                warnings.append("⚠️ الأداء منخفض جداً (أقل من 50%). تحقق من الوحدات.")
             if oee > 100:
-                warnings.append("⚠️ OEE أكبر من 100% (غير منطقي). تحقق من المدخلات.")
+                warnings.append("⚠️ OEE أكبر من 100% (غير منطقي).")
             
             result = {
                 "availability": availability,
@@ -81,3 +67,18 @@ class DataEngine:
             return result, None
         except Exception as e:
             return None, str(e)
+
+    def generate_forecast(self, date_col, value_col, periods=3):
+        from prophet import Prophet
+        try:
+            prophet_df = self.df.to_pandas()[[date_col, value_col]].copy()
+            prophet_df.columns = ['ds', 'y']
+            prophet_df['ds'] = pd.to_datetime(prophet_df['ds'], errors='coerce')
+            prophet_df = prophet_df.dropna(subset=['ds']).groupby('ds').sum().reset_index()
+            m = Prophet()
+            m.fit(prophet_df)
+            future = m.make_future_dataframe(periods=periods, freq='ME')
+            forecast = m.predict(future)
+            return m, forecast, None
+        except Exception as e:
+            return None, None, str(e)
