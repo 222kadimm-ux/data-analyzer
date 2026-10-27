@@ -11,11 +11,12 @@ class DataQualityChecker:
         self.issues = []
         self.score = 100
 
-        # التعديل: التحقق من الجدول الفارغ
+        # 1. التحقق من الجدول الفارغ
         if self.df.height == 0:
             self.issues.append("⚠️ الملف فارغ (0 صفوف).")
             return self.issues, 0
 
+        # 2. القيم الفارغة
         null_counts = self.df.null_count().to_dicts()[0]
         for col, count in null_counts.items():
             if count > 0:
@@ -23,7 +24,10 @@ class DataQualityChecker:
                 if percentage > 10:
                     self.issues.append(f"⚠️ العمود '{col}' يحتوي على {percentage:.1f}% قيم فارغة.")
                     self.score -= 10
+                elif percentage > 0:
+                    self.score -= 2
 
+        # 3. القيم السالبة في أعمدة الإنتاج
         production_cols = ['Planned_Time_Mins', 'Downtime_Mins', 'Total_Count', 'Good_Count']
         for col in production_cols:
             if col in self.df.columns:
@@ -32,11 +36,13 @@ class DataQualityChecker:
                     self.issues.append(f"⚠️ العمود '{col}' يحتوي على {negatives} قيماً سالبة.")
                     self.score -= 5
 
+        # 4. عمود التاريخ
         date_cols = [c for c in self.df.columns if 'date' in c.lower() or 'mois' in c.lower()]
         if not date_cols:
             self.issues.append("ℹ️ لا يوجد عمود تاريخ. التنبؤ الزمني لن يعمل.")
             self.score -= 5
 
+        # 5. التكرارات
         duplicates = self.df.height - self.df.unique().height
         if duplicates > 0:
             self.issues.append(f"⚠️ يوجد {duplicates} صفوف مكررة.")
