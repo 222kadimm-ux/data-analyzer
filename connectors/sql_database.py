@@ -1,9 +1,11 @@
 import polars as pl
 import pandas as pd
 from sqlalchemy import create_engine, text
+from urllib.parse import urlparse
 from .base import BaseConnector
 
-# التعديل: إزالة جدول users لأسباب أمنية
+# قائمة المضيفين المسموح بهم (يجب تعديلها حسب بيئة الإنتاج)
+ALLOWED_HOSTS = ["ep-purple-mud-b5sns22j-pooler.c-7.us-east-2.aws.neon.tech"]
 ALLOWED_TABLES = ["production_data", "sales_data"]
 
 class SQLDatabaseConnector(BaseConnector):
@@ -13,11 +15,16 @@ class SQLDatabaseConnector(BaseConnector):
         self.limit = limit
 
     def load_data(self) -> pl.DataFrame:
-        # 1. التحقق من الجدول
+        # 1. التحقق من المضيف لمنع SSRF
+        parsed = urlparse(self.db_url)
+        if parsed.hostname not in ALLOWED_HOSTS:
+            raise ValueError("❌ المضيف غير مسموح. اتصل بالدعم.")
+            
+        # 2. التحقق من الجدول
         if self.table_name not in ALLOWED_TABLES:
-            raise ValueError(f"❌ الجدول غير مسموح: {self.table_name}. الجداول المسموحة: {', '.join(ALLOWED_TABLES)}")
+            raise ValueError("❌ الجدول غير مسموح.")
         
-        # 2. التحقق من الحد
+        # 3. التحقق من الحد
         if not isinstance(self.limit, int) or self.limit <= 0:
             self.limit = 10000
 
@@ -26,8 +33,7 @@ class SQLDatabaseConnector(BaseConnector):
             query = text(f"SELECT * FROM {self.table_name} LIMIT {self.limit}")
             df_pd = pd.read_sql(query, engine)
             return pl.from_pandas(df_pd)
-        except Exception as e:
-            # عدم كشف الرابط أو كلمة المرور
+        except Exception:
             raise ValueError("❌ فشل الاتصال بقاعدة البيانات. تحقق من الصلاحيات.")
         finally:
             engine.dispose()
