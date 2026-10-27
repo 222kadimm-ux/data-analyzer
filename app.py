@@ -70,7 +70,7 @@ t = {
         "file_upload": "Choisir un fichier Excel ou CSV",
         "no_data": "⚠️ Veuillez importer des données d'abord.",
         "saved_work": "🗂️ Vos fichiers précédents",
-        "login_portal": "🔒 Portail Employés (Optionnel)",
+        "login_portal": "⚙️ Gestion du compte (Admin)",
         "logout": "Déconnexion",
         "email": "Email",
         "password": "Mot de passe",
@@ -88,7 +88,7 @@ t = {
         "file_upload": "اختر ملف Excel أو CSV",
         "no_data": "⚠️ يرجى رفع البيانات أولاً.",
         "saved_work": "🗂️ ملفاتك السابقة",
-        "login_portal": "🔒 بوابة الموظفين (اختياري)",
+        "login_portal": "⚙️ إدارة الحساب (للمدير)",
         "logout": "تسجيل الخروج",
         "email": "البريد الإلكتروني",
         "password": "كلمة المرور",
@@ -106,7 +106,7 @@ t = {
         "file_upload": "Choose an Excel or CSV file",
         "no_data": "⚠️ Please import data first.",
         "saved_work": "🗂️ Your previous files",
-        "login_portal": "🔒 Employee Portal (Optional)",
+        "login_portal": "⚙️ Account Management (Admin)",
         "logout": "Logout",
         "email": "Email",
         "password": "Password",
@@ -116,7 +116,7 @@ t = {
 }[st.session_state.lang]
 
 # ==========================================
-# 3. إدارة الكوكيز والدوال المساعدة
+# 3. إدارة الكوكيز (الحفظ التلقائي للمصانع)
 # ==========================================
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
@@ -129,6 +129,7 @@ if 'anon_uuid' not in st.session_state:
         cookie_manager.set("anon_uuid", new_uuid)
         st.session_state.anon_uuid = new_uuid
 
+# المستخدم الحالي: إما مسجل (بريد) أو مجهول (UUID)
 current_user = st.session_state.user_email if st.session_state.get('logged_in') else st.session_state.anon_uuid
 
 def load_from_gsheets(sheet_url):
@@ -179,14 +180,11 @@ ai_assistant = AIAssistant()
 # 5. القائمة الجانبية
 # ==========================================
 st.sidebar.title("Enterprise Data Analyzer")
-st.sidebar.info("💾 Sauvegarde automatique activée" if st.session_state.lang != "AR" else "💾 الحفظ التلقائي مفعل")
+st.sidebar.info("💾 الحفظ التلقائي مفعل" if st.session_state.lang == "AR" else "💾 Auto-Save Enabled")
 
-if st.sidebar.button("🛡️ Sécurité / الأمان / Security"):
-    st.session_state.show_security = True
-    st.rerun()
-
-if not st.session_state.logged_in:
-    with st.sidebar.expander(t["login_portal"]):
+# إدارة الحساب (للمدير فقط) - مخفية
+with st.sidebar.expander(t["login_portal"]):
+    if not st.session_state.logged_in:
         login_email = st.text_input(t["email"], key="l_email")
         login_pass = st.text_input(t["password"], type="password", key="l_pass")
         if st.button("Login / دخول"):
@@ -199,10 +197,15 @@ if not st.session_state.logged_in:
         if st.button("Register / إنشاء حساب"):
             if len(new_pass) < 6: st.warning("Short / قصيرة")
             elif create_user(new_email, new_pass): st.success("✅"); st.rerun()
-else:
-    st.sidebar.write(f"👤 {st.session_state.user_email}")
-    if st.sidebar.button(t["logout"]): logout_user()
+    else:
+        st.write(f"👤 {st.session_state.user_email}")
+        if st.button(t["logout"]): logout_user()
 
+if st.sidebar.button("🛡️ Sécurité / الأمان / Security"):
+    st.session_state.show_security = True
+    st.rerun()
+
+# عرض الملفات المحفوظة (لكل مصنع على حدة)
 st.sidebar.divider()
 st.sidebar.subheader(t["saved_work"])
 files = get_files(current_user)
