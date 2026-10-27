@@ -11,7 +11,6 @@ import extra_streamlit_components as stx
 import numpy as np
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
-from sqlalchemy import create_engine
 from database import init_db, save_file, get_files, delete_file, get_db_connection
 from auth import create_user, verify_user, login_user, logout_user
 from core_engine import DataEngine
@@ -22,7 +21,7 @@ from validation.schema import SchemaValidator
 from connectors.csv_excel import CSVExcelConnector
 from connectors.sql_database import SQLDatabaseConnector
 from connectors.rest_api import RESTAPIConnector
-from connectors.opcua_connector import OPCUAConnector # استيراد موصل OPC UA
+from connectors.opcua_connector import OPCUAConnector
 
 # ==========================================
 # 1. إعدادات الصفحة
@@ -415,9 +414,9 @@ with tab_advanced:
                         st.error(f"❌ {e}")
 
     elif adv_option == "OPC UA":
-        st.info("💡 Connectez un serveur OPC UA (Test) / اربط سيرفر OPC UA")
+        st.warning("⚠️ Ceci est une version de test. Pour une connexion réelle, contactez le service IT." if st.session_state.lang != "AR" else "⚠️ هذا الإصدار التجريبي. للاتصال الحقيقي، اتصل بقسم IT.")
         opc_url = st.text_input("OPC UA URL:", value="opc.tcp://opcua.demo-this.com:51210/UA/SampleServer")
-        node_id = st.text_input("Node ID:", value="nsu=http://test.org/UA/Data/;i=10854")
+        node_id = st.text_input("Node ID:", value="ns=3;s=\"StaticData\".\"Scalar\".\"Double\"")
         
         if st.button("Fetch OPC UA Data / جلب البيانات"):
             if opc_url and node_id:
