@@ -1,7 +1,7 @@
 import asyncio
 import polars as pl
 import pandas as pd
-import random
+from asyncua import Client
 from .base import BaseConnector
 
 class OPCUAConnector(BaseConnector):
@@ -9,13 +9,24 @@ class OPCUAConnector(BaseConnector):
         self.url = url
         self.node_ids = node_ids
 
+    async def _fetch_data(self):
+        data = []
+        # محاولة الاتصال بالخادم الحقيقي
+        async with Client(url=self.url) as client:
+            for node_id in self.node_ids:
+                try:
+                    node = client.get_node(node_id)
+                    value = await node.read_value()
+                    data.append({"NodeID": node_id, "Value": value})
+                except Exception as e:
+                    data.append({"NodeID": node_id, "Value": f"Error: {e}"})
+        return data
+
     def load_data(self) -> pl.DataFrame:
         try:
-            # محاكاة قراءة بيانات من آلة (بدون اتصال حقيقي)
-            # هذا الكود يعمل كأنه قرأ القيمة من العداد
-            simulated_value = random.randint(100, 5000)
-            
-            data = [{"NodeID": self.node_ids[0], "Value": simulated_value}]
+            data = asyncio.run(self._fetch_data())
+            if not data:
+                raise ValueError("لم يتم جلب أي بيانات من OPC UA.")
             return pl.from_pandas(pd.DataFrame(data))
         except Exception as e:
-            raise ValueError(f"❌ فشل الاتصال: {e}")
+            raise ValueError(f"❌ فشل الاتصال بـ OPC UA: {e}")
