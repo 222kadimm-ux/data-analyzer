@@ -1,39 +1,54 @@
-import asyncio
-import polars as pl
-import pandas as pd
-from asyncua import Client
-from .base import BaseConnector
+import time
+import streamlit as st
+from asyncua import Client, ua
 
-class OPCUAConnector(BaseConnector):
-    def __init__(self, url, node_ids):
+class OPCUAConnector:
+    def __init__(self, url, node_id):
         self.url = url
-        self.node_ids = node_ids
+        self.node_id = node_id
+        self.client = None
 
-    async def _fetch_data(self):
-        data = []
-        # إضافة مهلة للاتصال (10 ثوانٍ)
-        async with Client(url=self.url, timeout=10) as client:
-            for node_id in self.node_ids:
-                try:
-                    node = client.get_node(node_id)
-                    value = await node.read_value()
-                    data.append({"NodeID": node_id, "Value": value})
-                except Exception as e:
-                    # رفض النتيجة إذا فشلت قراءة أي عقدة
-                    raise ValueError(f"فشل قراءة العقدة {node_id}: {e}")
-        return data
-
-    def load_data(self) -> pl.DataFrame:
+    def connect(self):
+        """الاتصال بالخادم مع إعادة المحاولة"""
         try:
-            data = asyncio.run(self._fetch_data())
-            if not data:
-                raise ValueError("لم يتم جلب أي بيانات من OPC UA.")
-            
-            # التحقق من وجود أي خطأ في البيانات
-            for row in data:
-                if "Error" in str(row.get("Value", "")):
-                    raise ValueError(f"❌ فشل قراءة العقدة: {row['Value']}")
-                    
-            return pl.from_pandas(pd.DataFrame(data))
+            self.client = Client(url=self.url, timeout=10)
+            self.client.connect()
+            return True, "✅ Connecté au serveur OPC UA"
         except Exception as e:
-            raise ValueError(f"❌ فشل الاتصال بـ OPC UA: {e}")
+            return False, f"❌ Échec de connexion: {e}"
+
+    def read_value(self):
+        """قراءة قيمة واحدة من العقدة"""
+        if not self.client:
+            return None, "❌ Non connecté"
+        try:
+            node = self.client.get_node(self.node_id)
+            value = node.read_value()
+            return value, "✅"
+        except Exception as e:
+            return None, f"❌ Erreur de lecture: {e}"
+
+    def disconnect(self):
+        """قطع الاتصال بأمان"""
+        if self.client:
+            try:
+                self.client.disconnect()
+            except:
+                pass
+            self.client = None
+
+    def start_streaming(self, duration_sec=60, interval_sec=1):
+        """بث مستمر للبيانات لمدة محددة (محاكاة لقراءة مستمرة)"""
+        st.info(f"🔄 Démarrage du streaming pour {duration_sec} secondes...")
+        data = []
+        end_time = time.time() + duration_sec
+        
+        while time.time() < end_time:
+            value, status = self.read_value()
+            if value is not None:
+                data.append({"timestamp": time.time(), "value": value})
+                st.toast(f"Valeur: {value} (Total: {len(data)})")
+            time.sleep(interval_sec)
+        
+        st.success(f"✅ Streaming terminé. {len(data)} valeurs lues.")
+        return data
