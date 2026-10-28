@@ -16,38 +16,52 @@ class DataEngine:
     def calculate_oee(self):
         df = self.df.to_pandas()
         req = ['Planned_Time_Mins', 'Downtime_Mins', 'Ideal_Cycle_Time_Sec', 'Total_Count', 'Good_Count']
+        
+        # 1. التحقق من وجود الأعمدة
         if not all(c in df.columns for c in req):
             return None, "Colonnes OEE manquantes"
         
-        # التحقق من القيم السالبة والفارغة
-        for col in req:
-            if df[col].isnull().any():
-                return None, f"Valeurs manquantes dans {col}"
-            if (df[col] < 0).any():
-                return None, f"Valeurs négatives dans {col}"
+        # 2. التحقق من القيم الفارغة
+        if df[req].isnull().any().any():
+            return None, "Valeurs manquantes dans les colonnes OEE"
+
+        # 3. التحقق من القيم السالبة
+        if (df[req] < 0).any().any():
+            return None, "Valeurs négatives détectées"
+
+        # 4. التحقق من أن التوقف لا يتجاوز الوقت المخطط
+        if (df['Downtime_Mins'] > df['Planned_Time_Mins']).any():
+            return None, "Temps d'arrêt supérieur au temps planifié"
+
+        # 5. التحقق من أن الوقت المخطط ليس صفراً
+        if (df['Planned_Time_Mins'] == 0).any():
+            return None, "Temps planifié = 0"
+
+        # 6. التحقق من أن القطع السليمة لا تتجاوز الإجمالي
         if (df['Good_Count'] > df['Total_Count']).any():
             return None, "Good_Count > Total_Count"
-        if (df['Planned_Time_Mins'] == 0).any():
-            return None, "Planned_Time_Mins = 0"
 
         try:
             df['Run_Time'] = df['Planned_Time_Mins'] - df['Downtime_Mins']
             df['Availability'] = df['Run_Time'] / df['Planned_Time_Mins']
+            
             df['Ideal_Time'] = (df['Total_Count'] * df['Ideal_Cycle_Time_Sec']) / 60
-            df['Performance'] = df['Ideal_Time'] / df['Run_Time']
+            # تجنب القسمة على صفر في Performance
+            df['Performance'] = df.apply(lambda row: row['Ideal_Time'] / row['Run_Time'] if row['Run_Time'] > 0 else 0, axis=1)
+            
             df['Quality'] = df['Good_Count'] / df['Total_Count']
             df['OEE'] = df['Availability'] * df['Performance'] * df['Quality']
             
-            # استخدام المتوسط الموزون (وليس متوسط النسب)
+            # الحساب الإجمالي (المتوسط الموزون)
             total_planned = df['Planned_Time_Mins'].sum()
             total_run = df['Run_Time'].sum()
             total_ideal = df['Ideal_Time'].sum()
             total_good = df['Good_Count'].sum()
             total_count = df['Total_Count'].sum()
             
-            availability = (total_run / total_planned) * 100
-            performance = (total_ideal / total_run) * 100
-            quality = (total_good / total_count) * 100
+            availability = (total_run / total_planned) * 100 if total_planned > 0 else 0
+            performance = (total_ideal / total_run) * 100 if total_run > 0 else 0
+            quality = (total_good / total_count) * 100 if total_count > 0 else 0
             
             return {
                 "availability": availability,
@@ -66,7 +80,7 @@ class DataEngine:
             prophet_df = prophet_df.dropna(subset=['ds']).groupby('ds').sum().reset_index()
             
             if len(prophet_df) < 2:
-                return None, None, "Besoin d'au moins 2 points de données."
+                return None, None, "Besoin d'au moins 2 points de données valides."
             
             m = Prophet()
             m.fit(prophet_df)
