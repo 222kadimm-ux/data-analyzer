@@ -13,7 +13,6 @@ class AIAssistant:
     def _call_api(self, prompt):
         if not self.api_key:
             return "⚠️ API Key missing.", False
-        
         data = {
             "model": "openrouter/free",
             "messages": [{"role": "user", "content": prompt}],
@@ -31,32 +30,23 @@ class AIAssistant:
         columns = df_pandas.columns.tolist()
         stats = df_pandas.describe().to_string()
         sample = df_pandas.head(5).to_string()
-        
-        lang_name = {"FR": "Français", "AR": "Arabe", "EN": "Anglais"}.get(lang, "Français")
-        
-        prompt = f"""
-        Tu es un analyste de données. Voici les informations sur les données:
-        - Colonnes: {columns}
-        - Statistiques: {stats}
-        - Échantillon (5 lignes): {sample}
-        
-        Donne-moi un rapport complet en {lang_name} avec 3 recommandations.
-        """
+        lang_name = {"FR": "Français", "AR": "Arabe"}.get(lang, "Français")
+        prompt = f"Tu es un analyste. Colonnes: {columns}. Stats: {stats}. Échantillon: {sample}. Donne un rapport en {lang_name} avec 3 recommandations."
         return self._call_api(prompt)
 
     def generate_sql(self, question, table_name):
-        # حماية: التحقق من أن الاستعلام آمن
-        prompt = f"Génère une requête SQL (SELECT) pour la table `{table_name}`.\nQuestion: {question}\nRéponds uniquement avec le code SQL."
+        prompt = f"Génère une requête SQL (SELECT) pour la table `{table_name}`. Question: {question}. Réponds uniquement avec le code SQL."
         sql, success = self._call_api(prompt)
         
         if not success:
             return sql, False
         
-        # التحقق من أن الاستعلام يبدأ بـ SELECT فقط
+        # الحماية: التحقق من أن الاستعلام آمن
         sql_clean = sql.strip().upper()
         if not sql_clean.startswith("SELECT"):
             return "❌ Sécurité: Seules les requêtes SELECT sont autorisées.", False
-        if "DROP" in sql_clean or "DELETE" in sql_clean or "UPDATE" in sql_clean or "INSERT" in sql_clean:
+        forbidden = ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "TRUNCATE", "CREATE"]
+        if any(word in sql_clean for word in forbidden):
             return "❌ Sécurité: Requête interdite.", False
         
         return sql, True
