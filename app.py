@@ -79,7 +79,10 @@ t = {
         "map_success": "✅ Mappage réussi ! Allez à l'onglet OEE.",
         "export_data": "📥 Exporter les Données",
         "correlation": "🔗 Matrice de Corrélation",
-        "corr_warn": "ℹ️ Besoin de 2 colonnes numériques pour la corrélation."
+        "corr_warn": "ℹ️ Besoin de 2 colonnes numériques pour la corrélation.",
+        "ai_privacy": "🔒 Confidentialité / الخصوصية",
+        "ai_toggle": "Autoriser l'IA à analyser les données",
+        "ai_disabled": "⚠️ L'IA est désactivée. Activez-la dans la barre latérale."
     },
     "AR": {
         "title": "🏭 محلل بيانات المؤسسات (OEE & AI)",
@@ -107,12 +110,15 @@ t = {
         "map_success": "✅ تم الربط بنجاح! اذهب لتبويب OEE.",
         "export_data": "📥 تصدير البيانات",
         "correlation": "🔗 مصفوفة الارتباطات",
-        "corr_warn": "ℹ️ تحتاج إلى عمودين رقميين لحساب الارتباط."
+        "corr_warn": "ℹ️ تحتاج إلى عمودين رقميين لحساب الارتباط.",
+        "ai_privacy": "🔒 الخصوصية",
+        "ai_toggle": "السماح للذكاء الاصطناعي بتحليل البيانات",
+        "ai_disabled": "⚠️ الذكاء الاصطناعي معطل. قم بتفعيله من القائمة الجانبية."
     }
 }[st.session_state.lang]
 
 # ==========================================
-# 3. إدارة الكوكيز (إصلاح الخطأ)
+# 3. إدارة الكوكيز
 # ==========================================
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
@@ -123,7 +129,6 @@ if 'anon_uuid' not in st.session_state:
     else:
         if cookie_manager.get_all() is not None:
             new_uuid = str(uuid.uuid4())
-            # إصلاح: استخدام datetime بدلاً من time
             expiry_date = datetime.datetime.now() + datetime.timedelta(days=365)
             cookie_manager.set("anon_uuid", new_uuid, expires_at=expiry_date)
             st.session_state.anon_uuid = new_uuid
@@ -183,6 +188,11 @@ ai_assistant = AIAssistant()
 # ==========================================
 st.sidebar.title("Enterprise Data Analyzer")
 st.sidebar.info("💾 Sauvegarde automatique activée / الحفظ التلقائي مفعل")
+
+# خيار الخصوصية (F6)
+st.sidebar.divider()
+st.sidebar.subheader(t["ai_privacy"])
+ai_enabled = st.sidebar.checkbox(t["ai_toggle"], value=True)
 
 if not st.session_state.logged_in:
     with st.sidebar.expander(t["login_portal"]):
@@ -401,19 +411,27 @@ with tab_forecast:
                         st.pyplot(m.plot(forecast))
 
 with tab_ai:
-    if st.session_state.df is None: st.info(t["no_data"])
+    if st.session_state.df is None: 
+        st.info(t["no_data"])
+    elif not ai_enabled:
+        st.warning(t["ai_disabled"])
     else:
         if st.button(t["report_btn"]):
             with st.spinner("..."):
-                report = ai_assistant.generate_report(st.session_state.df, st.session_state.lang)
-                st.info(report)
-                
-                pdf_file = PDFExporter.generate(report, st.session_state.lang)
-                st.download_button(t["download_pdf"], pdf_file, "report.pdf", "application/pdf")
+                report, success = ai_assistant.generate_report(st.session_state.df, st.session_state.lang)
+                if success:
+                    st.info(report)
+                    pdf_file = PDFExporter.generate(report, st.session_state.lang)
+                    st.download_button(t["download_pdf"], pdf_file, "report.pdf", "application/pdf")
+                else:
+                    st.error(report)
         
         question = st.text_input("Question / سؤال:")
         if st.button("Envoyer / إرسال"):
-            if question: st.success(ai_assistant._call_api(question))
+            if question: 
+                answer, success = ai_assistant._call_api(question)
+                if success: st.success(answer)
+                else: st.error(answer)
 
 with tab_sql:
     sql_db_url = st.text_input(t["sql_url"], type="password", key="sql_db")
@@ -423,14 +441,17 @@ with tab_sql:
     if st.button(t["sql_generate"]):
         if sql_db_url and sql_table and sql_question:
             with st.spinner("..."):
-                generated_sql = ai_assistant.generate_sql(sql_question, sql_table)
-                st.code(generated_sql, language="sql")
-                try:
-                    engine = create_engine(sql_db_url)
-                    result_df = pd.read_sql(generated_sql, engine)
-                    st.success(f"✅ ({len(result_df)})")
-                    st.dataframe(result_df)
-                except Exception as e:
-                    st.error(f"❌ {e}")
+                generated_sql, success = ai_assistant.generate_sql(sql_question, sql_table)
+                if success:
+                    st.code(generated_sql, language="sql")
+                    try:
+                        engine = create_engine(sql_db_url)
+                        result_df = pd.read_sql(generated_sql, engine)
+                        st.success(f"✅ ({len(result_df)})")
+                        st.dataframe(result_df)
+                    except Exception as e:
+                        st.error(f"❌ {e}")
+                else:
+                    st.error(generated_sql)
         else:
             st.warning("Fill all fields / املأ الحقول")
