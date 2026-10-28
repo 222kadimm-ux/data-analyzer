@@ -77,6 +77,9 @@ t = {
         "map_btn": "🔗 Mappage des Colonnes",
         "apply_map": "✅ Appliquer le mappage",
         "map_success": "✅ Mappage réussi ! Allez à l'onglet OEE.",
+        "export_data": "📥 Exporter les Données",
+        "correlation": "🔗 Matrice de Corrélation",
+        "corr_warn": "ℹ️ Besoin de 2 colonnes numériques pour la corrélation."
     },
     "AR": {
         "title": "🏭 محلل بيانات المؤسسات (OEE & AI)",
@@ -102,6 +105,9 @@ t = {
         "map_btn": "🔗 ربط الأعمدة",
         "apply_map": "✅ تطبيق الربط",
         "map_success": "✅ تم الربط بنجاح! اذهب لتبويب OEE.",
+        "export_data": "📥 تصدير البيانات",
+        "correlation": "🔗 مصفوفة الارتباطات",
+        "corr_warn": "ℹ️ تحتاج إلى عمودين رقميين لحساب الارتباط."
     }
 }[st.session_state.lang]
 
@@ -202,7 +208,9 @@ for f in files:
     col1, col2 = st.sidebar.columns([4, 1])
     if col1.button(f"{f[1]}", key=f"load_{f[0]}"):
         data = json.loads(f[2]) if isinstance(f[2], str) else f[2]
-        st.session_state.df = pl.from_pandas(pd.DataFrame(data)); st.rerun()
+        st.session_state.df = pl.from_pandas(pd.DataFrame(data))
+        st.session_state.raw_df = st.session_state.df
+        st.rerun()
     if col2.button("🗑️", key=f"del_{f[0]}"):
         delete_file(f[0], current_user); st.rerun()
 
@@ -307,13 +315,36 @@ with tab_upload:
                 else: st.error("❌")
 
 with tab_dashboard:
-    if st.session_state.df is None: st.info(t["no_data"])
+    if st.session_state.df is None: 
+        st.info(t["no_data"])
     else:
         engine = DataEngine(st.session_state.df)
         stats = engine.get_basic_stats()
+        
         c1, c2 = st.columns(2)
         c1.metric("Records / سجلات", f"{stats['records']:,}")
         c2.metric("Total", f"{stats['total']:,.0f}")
+
+        # --- F4: مصفوفة الارتباطات ---
+        st.divider()
+        st.subheader(t["correlation"])
+        corr_matrix = engine.get_correlation_matrix()
+        if corr_matrix is not None:
+            fig = px.imshow(corr_matrix, text_auto=True, aspect="auto", color_continuous_scale='RdBu')
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info(t["corr_warn"])
+
+        # --- F4: تصدير البيانات ---
+        st.divider()
+        st.subheader(t["export_data"])
+        df_export = st.session_state.df.to_pandas()
+        c1, c2 = st.columns(2)
+        c1.download_button("Télécharger CSV", df_export.to_csv(index=False).encode('utf-8-sig'), "data.csv", "text/csv")
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            df_export.to_excel(writer, index=False)
+        c2.download_button("Télécharger Excel", excel_buffer.getvalue(), "data.xlsx")
 
 with tab_oee:
     if st.session_state.df is None: st.info(t["no_data"])
