@@ -74,6 +74,9 @@ t = {
         "sql_generate": "Générer et exécuter",
         "report_btn": "📝 Générer un rapport automatique",
         "download_pdf": "📥 Télécharger le rapport en PDF",
+        "map_btn": "🔗 Mappage des Colonnes",
+        "apply_map": "✅ Appliquer le mappage",
+        "map_success": "✅ Mappage réussi ! Allez à l'onglet OEE.",
     },
     "AR": {
         "title": "🏭 محلل بيانات المؤسسات (OEE & AI)",
@@ -96,11 +99,14 @@ t = {
         "sql_generate": "توليد وتنفيذ الاستعلام",
         "report_btn": "📝 تقرير تلقائي",
         "download_pdf": "📥 تحميل التقرير كـ PDF",
+        "map_btn": "🔗 ربط الأعمدة",
+        "apply_map": "✅ تطبيق الربط",
+        "map_success": "✅ تم الربط بنجاح! اذهب لتبويب OEE.",
     }
 }[st.session_state.lang]
 
 # ==========================================
-# 3. إدارة الكوكيز (P0-5: إصلاح مشكلة الكتابة المزدوجة)
+# 3. إدارة الكوكيز
 # ==========================================
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
@@ -109,18 +115,17 @@ if 'anon_uuid' not in st.session_state:
     if saved_uuid:
         st.session_state.anon_uuid = saved_uuid
     else:
-        # لا نكتب الكوكيز حتى يتم تحميل المكون (لتجنب الكتابة المزدوجة)
         if cookie_manager.get_all() is not None:
             new_uuid = str(uuid.uuid4())
             cookie_manager.set("anon_uuid", new_uuid, expires_at=time.time() + 365*24*60*60)
             st.session_state.anon_uuid = new_uuid
         else:
-            st.stop() # انتظار إعادة التشغيل الأولى
+            st.stop()
 
 current_user = st.session_state.user_email if st.session_state.get('logged_in') else st.session_state.anon_uuid
 
 # ==========================================
-# 4. الدوال المساعدة (Google Sheets & SQL)
+# 4. الدوال المساعدة
 # ==========================================
 def load_from_gsheets(sheet_url):
     try:
@@ -158,6 +163,7 @@ if 'db_initialized' not in st.session_state:
     st.session_state.db_initialized = True
 
 if 'df' not in st.session_state: st.session_state.df = None
+if 'raw_df' not in st.session_state: st.session_state.raw_df = None
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'user_email' not in st.session_state: st.session_state.user_email = None
 if 'last_uploaded_sig' not in st.session_state: st.session_state.last_uploaded_sig = None
@@ -217,34 +223,61 @@ with tab_upload:
         uploaded_file = st.file_uploader(t["file_upload"], type=["xlsx", "csv"])
         
         if uploaded_file:
-            # التحقق من حجم الملف
             if uploaded_file.size > 100 * 1024 * 1024: 
                 st.error("🚫 Limite 100MB."); st.stop()
             
-            # P0-3: منع التكرار باستخدام البصمة (الاسم + الحجم)
             file_signature = f"{uploaded_file.name}_{uploaded_file.size}"
             
             if st.session_state.last_uploaded_sig != file_signature:
                 with st.spinner("..."):
                     try:
-                        # قراءة الملف وتجاهل الأخطاء
-                        if uploaded_file.name.endswith('.csv'):
-                            df = pl.read_csv(uploaded_file, infer_schema_length=10000, ignore_errors=True)
-                        else:
-                            df = pl.read_excel(uploaded_file)
-                        
+                        df = pl.read_csv(uploaded_file, infer_schema_length=10000, ignore_errors=True) if uploaded_file.name.endswith('.csv') else pl.read_excel(uploaded_file)
                         df = df.drop_nulls().unique()
+                        st.session_state.raw_df = df
                         st.session_state.df = df
-                        st.session_state.last_uploaded_sig = file_signature # تخزين البصمة
-                        
-                        # الحفظ في قاعدة البيانات مرة واحدة فقط
+                        st.session_state.last_uploaded_sig = file_signature
                         save_file(current_user, uploaded_file.name, df.head(5000).to_pandas() if df.height > 5000 else df.to_pandas())
-                        
                         st.success(f"✅ Importé avec succès! ({df.height:,})")
                     except Exception as e: 
                         st.error(f"❌ {e}")
             else:
                 st.info("ℹ️ الملف مرفوع بالفعل.")
+
+        # --- ميزة ربط الأعمدة (F1) ---
+        if st.session_state.raw_df is not None:
+            with st.expander(t["map_btn"], expanded=False):
+                cols = st.session_state.raw_df.columns
+                oee_cols = {
+                    "Planned_Time_Mins": "Temps planifié (min)",
+                    "Downtime_Mins": "Temps d'arrêt (min)",
+                    "Ideal_Cycle_Time_Sec": "Cycle idéal (sec)",
+                    "Total_Count": "Production totale",
+                    "Good_Count": "Production bonne"
+                }
+                
+                mapping = {}
+                col1, col2 = st.columns(2)
+                for i, (key, label) in enumerate(oee_cols.items()):
+                    with (col1 if i % 2 == 0 else col2):
+                        default_idx = 0
+                        for j, c in enumerate(cols):
+                            if key.lower() in str(c).lower() or label.split()[0].lower() in str(c).lower():
+                                default_idx = j + 1
+                                break
+                        mapping[key] = st.selectbox(f"{label}", options=["-- Ignorer --"] + list(cols), index=default_idx, key=f"map_{key}")
+                
+                if st.button(t["apply_map"]):
+                    if all(v != "-- Ignorer --" for v in mapping.values()):
+                        try:
+                            df_mapped = st.session_state.raw_df.rename(mapping)
+                            st.session_state.df = df_mapped
+                            save_file(current_user, f"Mapped_{uploaded_file.name}", df_mapped.head(5000).to_pandas())
+                            st.success(t["map_success"])
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ {e}")
+                    else:
+                        st.warning("⚠️ Veuillez sélectionner une colonne pour chaque champ.")
 
     elif "Google" in option:
         st.info("💡 **Pour les entreprises:** Partagez votre Google Sheet avec cet email (Viewer): `sheets-bot@data-analyzer-512419.iam.gserviceaccount.com`")
@@ -254,6 +287,7 @@ with tab_upload:
                 df = load_from_gsheets(gs_url)
                 if df is not None: 
                     st.session_state.df = df
+                    st.session_state.raw_df = df
                     save_file(current_user, "Google_Sheets", df.head(5000).to_pandas())
                     st.success("✅")
                 else: st.error("❌")
@@ -267,6 +301,7 @@ with tab_upload:
                 df = load_from_sql(db_url, table_name)
                 if df is not None: 
                     st.session_state.df = df
+                    st.session_state.raw_df = df
                     save_file(current_user, "SQL_Data", df.to_pandas())
                     st.success("✅")
                 else: st.error("❌")
@@ -286,7 +321,6 @@ with tab_oee:
         engine = DataEngine(st.session_state.df)
         oee_data, error = engine.calculate_oee()
         if error:
-            # الرفض الذكي (P0-3 / F3)
             st.warning(f"⚠️ {error}")
             st.info("💡 **Suggestion:** Vos données ne contiennent pas les colonnes OEE. Voulez-vous analyser une autre métrique ?" if st.session_state.lang == "FR" else "💡 **اقتراح:** بياناتك لا تحتوي على أعمدة OEE. هل تريد تحليل مقياس آخر؟")
             
