@@ -1,0 +1,12 @@
+pytest
+pandas
+polars
+numpy
+sqlalchemy
+asyncua
+openpyxl
+pyarrow
+psycopg2-binary
+streamlit
+tenacity
+requests
