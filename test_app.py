@@ -36,7 +36,7 @@ def test_oee_zero_planned_time():
     engine = DataEngine(df)
     result, error = engine.calculate_oee()
     assert result is None
-    assert "الوقت المخطط يجب أن يكون أكبر من صفر" in error
+    assert "strictement positif" in error
 
 def test_oee_zero_run_time():
     df = pl.DataFrame({
@@ -48,8 +48,10 @@ def test_oee_zero_run_time():
     })
     engine = DataEngine(df)
     result, error = engine.calculate_oee()
-    assert result is None
-    assert "توقف كامل" in error
+    # A complete stop is a valid production state: OEE should be zero, not crash.
+    assert error is None
+    assert result["availability"] == pytest.approx(0.0)
+    assert result["oee"] == pytest.approx(0.0)
 
 def test_oee_negative_values():
     df = pl.DataFrame({
@@ -62,7 +64,7 @@ def test_oee_negative_values():
     engine = DataEngine(df)
     result, error = engine.calculate_oee()
     assert result is None
-    assert "قيم سالبة" in error
+    assert "négatives" in error
 
 def test_oee_good_count_exceeds_total():
     df = pl.DataFrame({
@@ -75,7 +77,7 @@ def test_oee_good_count_exceeds_total():
     engine = DataEngine(df)
     result, error = engine.calculate_oee()
     assert result is None
-    assert "عدد القطع السليمة أكبر من إجمالي القطع" in error
+    assert "Good_Count" in error
 
 # ==========================================
 # 2. اختبارات التحقق من المخطط (Schema)
