@@ -23,5 +23,5 @@ tenacity
 
 openpyxl
 asyncua
-
+psycopg[binary]
 requests
