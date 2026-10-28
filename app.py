@@ -5,31 +5,27 @@ import plotly.express as px
 import io
 import json
 import uuid
+import time
 import sentry_sdk
 import gspread
 import extra_streamlit_components as stx
-import numpy as np
-from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
+from sqlalchemy import create_engine
 from database import init_db, save_file, get_files, delete_file, get_db_connection
 from auth import create_user, verify_user, login_user, logout_user
 from core_engine import DataEngine
 from ai_engine import AIAssistant
 from pdf_exporter import PDFExporter
-from quality_checker import DataQualityChecker
-from validation.schema import SchemaValidator
-from connectors.csv_excel import CSVExcelConnector
-from connectors.sql_database import SQLDatabaseConnector
-from connectors.rest_api import RESTAPIConnector
-from connectors.opcua_connector import OPCUAConnector
+from settings import SENTRY_DSN
 
 # ==========================================
-# 1. إعدادات الصفحة
+# 1. إعدادات الصفحة والمراقبة
 # ==========================================
 st.set_page_config(page_title="Enterprise Data Analyzer", page_icon="🏭", layout="wide")
 
 try:
-    sentry_sdk.init(dsn=st.secrets.get("SENTRY_DSN", ""), traces_sample_rate=1.0, send_default_pii=False)
+    if SENTRY_DSN:
+        sentry_sdk.init(dsn=SENTRY_DSN, traces_sample_rate=1.0, send_default_pii=False)
 except Exception:
     pass
 
@@ -53,10 +49,8 @@ st.markdown("""
 if 'lang' not in st.session_state:
     st.session_state.lang = "FR"
 
-lang = st.sidebar.selectbox("🌐 Language / Langue / اللغة", ["FR (Français)", "AR (العربية)", "EN (English)"])
-if "AR" in lang: st.session_state.lang = "AR"
-elif "EN" in lang: st.session_state.lang = "EN"
-else: st.session_state.lang = "FR"
+lang = st.sidebar.selectbox("🌐 Language / Langue", ["FR (Français)", "AR (العربية)"])
+st.session_state.lang = "AR" if "AR" in lang else "FR"
 
 t = {
     "FR": {
@@ -66,14 +60,18 @@ t = {
         "oee_tab": "3️⃣ OEE",
         "forecast_tab": "4️⃣ Prévisions",
         "ai_tab": "5️⃣ Assistant IA",
-        "advanced_tab": "⚙️ Outils Avancés",
+        "sql_tab": "6️⃣ Requête SQL",
         "file_upload": "Choisir un fichier Excel ou CSV",
         "no_data": "⚠️ Veuillez importer des données d'abord.",
         "saved_work": "🗂️ Vos fichiers précédents",
-        "login_portal": "⚙️ Gestion du compte (Admin)",
+        "login_portal": "🔒 Portail Employés (Optionnel)",
         "logout": "Déconnexion",
         "email": "Email",
         "password": "Mot de passe",
+        "sql_url": "1. URL de la base de données (postgresql://...)",
+        "sql_table": "2. Nom de la table:",
+        "sql_question": "3. Votre question:",
+        "sql_generate": "Générer et exécuter",
         "report_btn": "📝 Générer un rapport automatique",
         "download_pdf": "📥 Télécharger le rapport en PDF",
     },
@@ -84,39 +82,25 @@ t = {
         "oee_tab": "3️⃣ OEE",
         "forecast_tab": "4️⃣ التنبؤ بالمستقبل",
         "ai_tab": "5️⃣ المساعد الذكي",
-        "advanced_tab": "⚙️ خيارات متقدمة",
+        "sql_tab": "6️⃣ اسأل SQL",
         "file_upload": "اختر ملف Excel أو CSV",
         "no_data": "⚠️ يرجى رفع البيانات أولاً.",
         "saved_work": "🗂️ ملفاتك السابقة",
-        "login_portal": "⚙️ إدارة الحساب (للمدير)",
+        "login_portal": "🔒 بوابة الموظفين (اختياري)",
         "logout": "تسجيل الخروج",
         "email": "البريد الإلكتروني",
         "password": "كلمة المرور",
+        "sql_url": "1. رابط قاعدة البيانات (postgresql://...)",
+        "sql_table": "2. اسم الجدول:",
+        "sql_question": "3. سؤالك:",
+        "sql_generate": "توليد وتنفيذ الاستعلام",
         "report_btn": "📝 تقرير تلقائي",
         "download_pdf": "📥 تحميل التقرير كـ PDF",
-    },
-    "EN": {
-        "title": "🏭 Enterprise Data Analyzer (OEE & AI)",
-        "upload_tab": "1️⃣ Import Data",
-        "dashboard_tab": "2️⃣ Dashboard",
-        "oee_tab": "3️⃣ OEE",
-        "forecast_tab": "4️⃣ Forecast",
-        "ai_tab": "5️⃣ AI Assistant",
-        "advanced_tab": "⚙️ Advanced Tools",
-        "file_upload": "Choose an Excel or CSV file",
-        "no_data": "⚠️ Please import data first.",
-        "saved_work": "🗂️ Your previous files",
-        "login_portal": "⚙️ Account Management (Admin)",
-        "logout": "Logout",
-        "email": "Email",
-        "password": "Password",
-        "report_btn": "📝 Generate Auto Report",
-        "download_pdf": "📥 Download Report as PDF",
     }
 }[st.session_state.lang]
 
 # ==========================================
-# 3. إدارة الكوكيز (الحفظ التلقائي للمصانع)
+# 3. إدارة الكوكيز (P0-5: إصلاح مشكلة الكتابة المزدوجة)
 # ==========================================
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
@@ -125,13 +109,19 @@ if 'anon_uuid' not in st.session_state:
     if saved_uuid:
         st.session_state.anon_uuid = saved_uuid
     else:
-        new_uuid = str(uuid.uuid4())
-        cookie_manager.set("anon_uuid", new_uuid)
-        st.session_state.anon_uuid = new_uuid
+        # لا نكتب الكوكيز حتى يتم تحميل المكون (لتجنب الكتابة المزدوجة)
+        if cookie_manager.get_all() is not None:
+            new_uuid = str(uuid.uuid4())
+            cookie_manager.set("anon_uuid", new_uuid, expires_at=time.time() + 365*24*60*60)
+            st.session_state.anon_uuid = new_uuid
+        else:
+            st.stop() # انتظار إعادة التشغيل الأولى
 
-# المستخدم الحالي: إما مسجل (بريد) أو مجهول (UUID)
 current_user = st.session_state.user_email if st.session_state.get('logged_in') else st.session_state.anon_uuid
 
+# ==========================================
+# 4. الدوال المساعدة (Google Sheets & SQL)
+# ==========================================
 def load_from_gsheets(sheet_url):
     try:
         creds_dict = dict(st.secrets["gcp_service_account"])
@@ -140,6 +130,13 @@ def load_from_gsheets(sheet_url):
         client = gspread.authorize(creds)
         data = client.open_by_url(sheet_url).sheet1.get_all_records()
         return pl.from_pandas(pd.DataFrame(data)) if data else None
+    except: return None
+
+def load_from_sql(db_url, table_name, limit=10000):
+    try:
+        engine = create_engine(db_url)
+        df_pd = pd.read_sql(f"SELECT * FROM {table_name} LIMIT {limit};", engine)
+        return pl.from_pandas(df_pd)
     except: return None
 
 def delete_my_account(email):
@@ -154,7 +151,7 @@ def delete_my_account(email):
     finally: cur.close(); conn.close()
 
 # ==========================================
-# 4. تهيئة الجلسة
+# 5. تهيئة الجلسة
 # ==========================================
 if 'db_initialized' not in st.session_state:
     init_db()
@@ -163,28 +160,18 @@ if 'db_initialized' not in st.session_state:
 if 'df' not in st.session_state: st.session_state.df = None
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'user_email' not in st.session_state: st.session_state.user_email = None
-if 'show_security' not in st.session_state: st.session_state.show_security = False
-
-if "live_data" not in st.session_state:
-    st.session_state.live_data = pd.DataFrame(
-        np.random.randn(100, 2), 
-        columns=["Line 1", "Line 2"], 
-        index=pd.date_range(end=datetime.now(), periods=100, freq='s')
-    )
-if "stream" not in st.session_state:
-    st.session_state.stream = False
+if 'last_uploaded_sig' not in st.session_state: st.session_state.last_uploaded_sig = None
 
 ai_assistant = AIAssistant()
 
 # ==========================================
-# 5. القائمة الجانبية
+# 6. القائمة الجانبية
 # ==========================================
 st.sidebar.title("Enterprise Data Analyzer")
-st.sidebar.info("💾 الحفظ التلقائي مفعل" if st.session_state.lang == "AR" else "💾 Auto-Save Enabled")
+st.sidebar.info("💾 Sauvegarde automatique activée / الحفظ التلقائي مفعل")
 
-# إدارة الحساب (للمدير فقط) - مخفية
-with st.sidebar.expander(t["login_portal"]):
-    if not st.session_state.logged_in:
+if not st.session_state.logged_in:
+    with st.sidebar.expander(t["login_portal"]):
         login_email = st.text_input(t["email"], key="l_email")
         login_pass = st.text_input(t["password"], type="password", key="l_pass")
         if st.button("Login / دخول"):
@@ -192,20 +179,15 @@ with st.sidebar.expander(t["login_portal"]):
                 login_user(login_email); st.rerun()
             else: st.error("Error / خطأ")
         
-        new_email = st.text_input("New Email / بريد جديد", key="n_email")
-        new_pass = st.text_input("New Password / كلمة مرور جديدة", type="password", key="n_pass")
-        if st.button("Register / إنشاء حساب"):
+        new_email = st.text_input("Nouveau / جديد", key="n_email")
+        new_pass = st.text_input("Mot de passe / كلمة المرور", type="password", key="n_pass")
+        if st.button("S'inscrire / إنشاء حساب"):
             if len(new_pass) < 6: st.warning("Short / قصيرة")
             elif create_user(new_email, new_pass): st.success("✅"); st.rerun()
-    else:
-        st.write(f"👤 {st.session_state.user_email}")
-        if st.button(t["logout"]): logout_user()
+else:
+    st.sidebar.write(f"👤 {st.session_state.user_email}")
+    if st.sidebar.button(t["logout"]): logout_user()
 
-if st.sidebar.button("🛡️ Sécurité / الأمان / Security"):
-    st.session_state.show_security = True
-    st.rerun()
-
-# عرض الملفات المحفوظة (لكل مصنع على حدة)
 st.sidebar.divider()
 st.sidebar.subheader(t["saved_work"])
 files = get_files(current_user)
@@ -218,124 +200,116 @@ for f in files:
     if col2.button("🗑️", key=f"del_{f[0]}"):
         delete_file(f[0], current_user); st.rerun()
 
-if st.session_state.show_security:
-    st.title("🛡️ Sécurité et Confidentialité / الأمان والخصوصية")
-    st.markdown("""
-    ### 1. Protection des données / حماية البيانات
-    - Vos données sont hébergées sur des serveurs sécurisés (Neon PostgreSQL).
-    - Tous les mots de passe sont chiffrés avec `bcrypt`.
-    
-    ### 2. Conformité / الامتثال
-    - Nous respectons les principes du RGPD.
-    - Nous ne vendons jamais vos données à des tiers.
-    """)
-    if st.button("Retour / عودة"):
-        st.session_state.show_security = False
-        st.rerun()
-    st.stop()
-
 # ==========================================
-# 6. الواجهة الرئيسية
+# 7. الواجهة الرئيسية
 # ==========================================
 st.title(t["title"])
-st.write("Solution professionnelle pour l'analyse des données industrielles." if st.session_state.lang == "FR" else ("Professional solution for industrial data analysis." if st.session_state.lang == "EN" else "حل احترافي لتحليل بيانات المصانع والشركات."))
+st.write("Solution professionnelle pour l'analyse des données industrielles et commerciales." if st.session_state.lang == "FR" else "حل احترافي لتحليل بيانات المصانع والشركات.")
 
 st.divider()
 
-tab_upload, tab_dashboard, tab_oee, tab_forecast, tab_ai, tab_advanced = st.tabs([
-    t["upload_tab"], 
-    t["dashboard_tab"], 
-    t["oee_tab"], 
-    t["forecast_tab"], 
-    t["ai_tab"], 
-    t["advanced_tab"]
-])
+tab_upload, tab_dashboard, tab_oee, tab_forecast, tab_ai, tab_sql = st.tabs([t["upload_tab"], t["dashboard_tab"], t["oee_tab"], t["forecast_tab"], t["ai_tab"], t["sql_tab"]])
 
-# --- 1. رفع البيانات ---
 with tab_upload:
-    uploaded_file = st.file_uploader(t["file_upload"], type=["xlsx", "csv"])
-    if uploaded_file:
-        with st.spinner("..."):
-            try:
-                connector = CSVExcelConnector(uploaded_file)
-                df = connector.load_data()
-                
-                validator = SchemaValidator(df)
-                is_valid_oee, msg_oee = validator.validate_oee_columns()
-                
-                checker = DataQualityChecker(df)
-                report_msg, issues = checker.get_report()
-                
-                st.session_state.df = df
-                save_file(current_user, uploaded_file.name, df.head(5000).to_pandas() if df.height > 5000 else df.to_pandas())
-                st.success(f"✅ Importé avec succès! ({df.height:,})")
-                
-                if issues:
-                    st.warning(report_msg)
-                    with st.expander("🔍 Voir les problèmes"):
-                        for issue in issues: st.write(issue)
-                    
-                    if st.button("🛠️ Réparer les données automatiquement / إصلاح البيانات تلقائياً"):
-                        with st.spinner("..."):
-                            fixed_df, changes = checker.get_fix_preview()
-                            st.session_state.df = fixed_df
-                            save_file(current_user, uploaded_file.name + "_fixed", fixed_df.head(5000).to_pandas())
-                            st.success(f"✅ Données réparées avec succès! ({', '.join(changes)})")
-                            st.rerun()
-                else:
-                    st.success(report_msg)
-                    
-            except Exception as e: st.error(f"❌ {e}")
+    option = st.radio("Source de données", ["Fichier / ملف", "Google Sheets", "SQL"])
+    
+    if "Fichier" in option or "ملف" in option:
+        uploaded_file = st.file_uploader(t["file_upload"], type=["xlsx", "csv"])
+        
+        if uploaded_file:
+            # التحقق من حجم الملف
+            if uploaded_file.size > 100 * 1024 * 1024: 
+                st.error("🚫 Limite 100MB."); st.stop()
+            
+            # P0-3: منع التكرار باستخدام البصمة (الاسم + الحجم)
+            file_signature = f"{uploaded_file.name}_{uploaded_file.size}"
+            
+            if st.session_state.last_uploaded_sig != file_signature:
+                with st.spinner("..."):
+                    try:
+                        # قراءة الملف وتجاهل الأخطاء
+                        if uploaded_file.name.endswith('.csv'):
+                            df = pl.read_csv(uploaded_file, infer_schema_length=10000, ignore_errors=True)
+                        else:
+                            df = pl.read_excel(uploaded_file)
+                        
+                        df = df.drop_nulls().unique()
+                        st.session_state.df = df
+                        st.session_state.last_uploaded_sig = file_signature # تخزين البصمة
+                        
+                        # الحفظ في قاعدة البيانات مرة واحدة فقط
+                        save_file(current_user, uploaded_file.name, df.head(5000).to_pandas() if df.height > 5000 else df.to_pandas())
+                        
+                        st.success(f"✅ Importé avec succès! ({df.height:,})")
+                    except Exception as e: 
+                        st.error(f"❌ {e}")
+            else:
+                st.info("ℹ️ الملف مرفوع بالفعل.")
 
-# --- 2. لوحة التحكم ---
+    elif "Google" in option:
+        st.info("💡 **Pour les entreprises:** Partagez votre Google Sheet avec cet email (Viewer): `sheets-bot@data-analyzer-512419.iam.gserviceaccount.com`")
+        gs_url = st.text_input("URL Google Sheets:")
+        if st.button("Import / سحب"):
+            if gs_url:
+                df = load_from_gsheets(gs_url)
+                if df is not None: 
+                    st.session_state.df = df
+                    save_file(current_user, "Google_Sheets", df.head(5000).to_pandas())
+                    st.success("✅")
+                else: st.error("❌")
+
+    elif "SQL" in option:
+        st.info("💡 Contactez votre service IT pour obtenir l'URL de votre base de données." if st.session_state.lang == "FR" else "💡 اتصل بقسم تقنية المعلومات للحصول على رابط قاعدة البيانات.")
+        db_url = st.text_input("URL (postgresql://...)", type="password")
+        table_name = st.text_input("Table:")
+        if st.button("Import / سحب"):
+            if db_url and table_name:
+                df = load_from_sql(db_url, table_name)
+                if df is not None: 
+                    st.session_state.df = df
+                    save_file(current_user, "SQL_Data", df.to_pandas())
+                    st.success("✅")
+                else: st.error("❌")
+
 with tab_dashboard:
     if st.session_state.df is None: st.info(t["no_data"])
     else:
         engine = DataEngine(st.session_state.df)
         stats = engine.get_basic_stats()
-        c1 = st.columns(1)[0]
+        c1, c2 = st.columns(2)
         c1.metric("Records / سجلات", f"{stats['records']:,}")
-        
-        if stats['details']:
-            st.subheader("Total par colonne / الإجمالي لكل عمود" if st.session_state.lang != "AR" else "الإجمالي لكل عمود")
-            for detail in stats['details']:
-                st.write(f"- {detail['column']}: {detail['total']:,.0f}")
+        c2.metric("Total", f"{stats['total']:,.0f}")
 
-# --- 3. OEE (مسرع) ---
-@st.fragment
-def render_oee():
+with tab_oee:
     if st.session_state.df is None: st.info(t["no_data"])
     else:
         engine = DataEngine(st.session_state.df)
         oee_data, error = engine.calculate_oee()
         if error:
+            # الرفض الذكي (P0-3 / F3)
             st.warning(f"⚠️ {error}")
-            st.info("💡 **Suggestion:** Vos données ne contiennent pas les colonnes OEE." if st.session_state.lang != "AR" else "💡 **اقتراح:** بياناتك لا تحتوي على أعمدة OEE.")
+            st.info("💡 **Suggestion:** Vos données ne contiennent pas les colonnes OEE. Voulez-vous analyser une autre métrique ?" if st.session_state.lang == "FR" else "💡 **اقتراح:** بياناتك لا تحتوي على أعمدة OEE. هل تريد تحليل مقياس آخر؟")
+            
             df = st.session_state.df.to_pandas()
             numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            
             if numeric_cols:
-                st.write("**Colonnes numériques disponibles:**" if st.session_state.lang != "AR" else "**الأعمدة الرقمية المتاحة:**")
+                st.write("**Colonnes numériques disponibles:**" if st.session_state.lang == "FR" else "**الأعمدة الرقمية المتاحة:**")
                 for col in numeric_cols:
                     st.write(f"- {col} (Moyenne / المتوسط: {df[col].mean():.2f}, Max: {df[col].max():.2f})")
-                st.write("**Analyse alternative suggérée:**" if st.session_state.lang != "AR" else "**تحليل بديل مقترح:**")
+                
+                st.write("**Analyse alternative suggérée:**" if st.session_state.lang == "FR" else "**تحليل بديل مقترح:**")
                 st.bar_chart(df[numeric_cols[0]].head(20))
             else:
-                st.error("❌ Aucune colonne numérique trouvée." if st.session_state.lang != "AR" else "❌ لا توجد أعمدة رقمية.")
+                st.error("❌ Aucune colonne numérique trouvée." if st.session_state.lang == "FR" else "❌ لا توجد أعمدة رقمية.")
         else:
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Disponibilité / الإتاحة", f"{oee_data['availability']:.1f}%")
             c2.metric("Performance / الأداء", f"{oee_data['performance']:.1f}%")
             c3.metric("Qualité / الجودة", f"{oee_data['quality']:.1f}%")
             c4.metric("OEE", f"{oee_data['oee']:.1f}%")
-            if oee_data.get("warning"):
-                st.warning(oee_data["warning"])
 
-with tab_oee:
-    render_oee()
-
-# --- 4. التنبؤ (مسرع) ---
-@st.fragment
-def render_forecast():
+with tab_forecast:
     if st.session_state.df is None: st.info(t["no_data"])
     else:
         df = st.session_state.df.to_pandas()
@@ -343,14 +317,14 @@ def render_forecast():
         numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
         
         if not date_cols or not numeric_cols:
-            st.warning("⚠️ Besoin d'une colonne Date et numérique." if st.session_state.lang != "AR" else "⚠️ تحتاج إلى عمود للتاريخ وعمود رقمي.")
+            st.warning("⚠️ Besoin d'une colonne Date et numérique." if st.session_state.lang == "FR" else "⚠️ تحتاج إلى عمود للتاريخ وعمود رقمي.")
         else:
             col1, col2 = st.columns(2)
             date_col = col1.selectbox("Colonne Date:", date_cols)
             value_col = col2.selectbox("Colonne Valeur:", numeric_cols)
             periods = st.slider("Périodes futures:", 1, 12, 3)
             
-            if st.button("Générer les prévisions / توليد التنبؤ / Generate Forecast"):
+            if st.button("Générer les prévisions"):
                 with st.spinner("..."):
                     engine = DataEngine(st.session_state.df)
                     m, forecast, error = engine.generate_forecast(date_col, value_col, periods)
@@ -359,10 +333,6 @@ def render_forecast():
                         st.success("✅")
                         st.pyplot(m.plot(forecast))
 
-with tab_forecast:
-    render_forecast()
-
-# --- 5. المساعد الذكي ---
 with tab_ai:
     if st.session_state.df is None: st.info(t["no_data"])
     else:
@@ -374,96 +344,26 @@ with tab_ai:
                 pdf_file = PDFExporter.generate(report, st.session_state.lang)
                 st.download_button(t["download_pdf"], pdf_file, "report.pdf", "application/pdf")
         
-        question = st.text_input("Question / سؤال / Question:")
-        if st.button("Envoyer / إرسال / Send"):
+        question = st.text_input("Question / سؤال:")
+        if st.button("Envoyer / إرسال"):
             if question: st.success(ai_assistant._call_api(question))
 
-# --- 6. الخيارات المتقدمة (SQL, API, OPC UA, Live) ---
-with tab_advanced:
-    st.subheader("⚙️ Outils Avancés / خيارات متقدمة")
-    adv_option = st.radio("Choisir l'outil / اختر الأداة:", ["SQL Query", "REST API", "OPC UA", "Live Stream"])
+with tab_sql:
+    sql_db_url = st.text_input(t["sql_url"], type="password", key="sql_db")
+    sql_table = st.text_input(t["sql_table"], key="sql_table")
+    sql_question = st.text_input(t["sql_question"], key="sql_q")
     
-    if adv_option == "SQL Query":
-        st.info("💡 Contactez votre service IT pour obtenir l'URL." if st.session_state.lang != "AR" else "💡 اتصل بقسم تقنية المعلومات.")
-        sql_db_url = st.text_input("URL (postgresql://...)", type="password", key="sql_db")
-        sql_table = st.text_input("Table:", key="sql_table")
-        
-        if st.button("Import / سحب"):
-            if sql_db_url and sql_table:
-                with st.spinner("..."):
-                    try:
-                        connector = SQLDatabaseConnector(sql_db_url, sql_table)
-                        df = connector.load_data()
-                        st.session_state.df = df
-                        save_file(current_user, "SQL_Data", df.to_pandas())
-                        st.success(f"✅ ({df.height})")
-                    except Exception as e:
-                        st.error(f"❌ {e}")
-
-    elif adv_option == "REST API":
-        st.info("💡 Connectez une API REST (ex: Shopify, ERP) / اربط API")
-        api_url = st.text_input("API URL:")
-        
-        if st.button("Fetch API Data / جلب البيانات"):
-            if api_url:
-                with st.spinner("..."):
-                    try:
-                        connector = RESTAPIConnector(api_url)
-                        df = connector.load_data()
-                        st.session_state.df = df
-                        save_file(current_user, "API_Data", df.to_pandas())
-                        st.success(f"✅ ({df.height})")
-                    except Exception as e:
-                        st.error(f"❌ {e}")
-
-    elif adv_option == "OPC UA":
-        st.warning("⚠️ Ceci est une version de test. Pour une connexion réelle, contactez le service IT." if st.session_state.lang != "AR" else "⚠️ هذا الإصدار التجريبي. للاتصال الحقيقي، اتصل بقسم IT.")
-        opc_url = st.text_input("OPC UA URL:", value="opc.tcp://opcua.demo-this.com:51210/UA/SampleServer")
-        node_id = st.text_input("Node ID:", value="ns=3;s=\"StaticData\".\"Scalar\".\"Double\"")
-        
-        if st.button("Fetch OPC UA Data / جلب البيانات"):
-            if opc_url and node_id:
-                with st.spinner("..."):
-                    try:
-                        connector = OPCUAConnector(opc_url, [node_id])
-                        df = connector.load_data()
-                        st.session_state.df = df
-                        save_file(current_user, "OPCUA_Data", df.to_pandas())
-                        st.success(f"✅ ({df.height})")
-                        st.dataframe(df)
-                    except Exception as e:
-                        st.error(f"❌ {e}")
-
-    elif adv_option == "Live Stream":
-        st.subheader("📈 Analyse en Direct / التحليل اللحظي")
-        
-        def get_recent_data(last_timestamp):
-            now = datetime.now()
-            if now - last_timestamp > timedelta(seconds=60):
-                last_timestamp = now - timedelta(seconds=60)
-            sample_time = timedelta(seconds=0.5)
-            next_timestamp = last_timestamp + sample_time
-            timestamps = pd.date_range(next_timestamp, now, freq='0.5s')
-            sample_values = np.random.randn(len(timestamps), 2)
-            return pd.DataFrame(sample_values, index=timestamps, columns=["Line 1", "Line 2"])
-
-        def toggle_streaming():
-            st.session_state.stream = not st.session_state.stream
-
-        st.sidebar.slider("تحديث كل (ثانية) / Refresh every:", 0.5, 5.0, value=1.0, key="run_every")
-        st.sidebar.button("بدء البث / Start Stream", disabled=st.session_state.stream, on_click=toggle_streaming)
-        st.sidebar.button("إيقاف البث / Stop Stream", disabled=not st.session_state.stream, on_click=toggle_streaming)
-
-        if st.session_state.stream:
-            run_every = st.session_state.run_every
+    if st.button(t["sql_generate"]):
+        if sql_db_url and sql_table and sql_question:
+            with st.spinner("..."):
+                generated_sql = ai_assistant.generate_sql(sql_question, sql_table)
+                st.code(generated_sql, language="sql")
+                try:
+                    engine = create_engine(sql_db_url)
+                    result_df = pd.read_sql(generated_sql, engine)
+                    st.success(f"✅ ({len(result_df)})")
+                    st.dataframe(result_df)
+                except Exception as e:
+                    st.error(f"❌ {e}")
         else:
-            run_every = None
-
-        @st.fragment(run_every=run_every)
-        def show_latest_data():
-            last_timestamp = st.session_state.live_data.index[-1]
-            st.session_state.live_data = pd.concat([st.session_state.live_data, get_recent_data(last_timestamp)])
-            st.session_state.live_data = st.session_state.live_data[-100:]
-            st.line_chart(st.session_state.live_data)
-
-        show_latest_data()
+            st.warning("Fill all fields / املأ الحقول")
