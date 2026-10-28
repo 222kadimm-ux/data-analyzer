@@ -22,3 +22,5 @@ tenacity
 
 openpyxl
 asyncua
+
+requests
