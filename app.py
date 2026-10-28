@@ -155,12 +155,13 @@ def load_from_gsheets(sheet_url):
     except: return None
 
 def load_from_sql(db_url, table_name, limit=10000):
+    """Load a bounded table through the validated SQL connector."""
     try:
-        engine = create_engine(db_url, connect_args={"connect_timeout": 10})
-        df_pd = pd.read_sql(f"SELECT * FROM {table_name} LIMIT {limit};", engine)
-        return pl.from_pandas(df_pd)
+        from connectors.sql_database import SQLDatabaseConnector
+        return SQLDatabaseConnector(db_url, table_name, limit=limit).load_data()
     except Exception as e:
-        st.error(f"❌ فشل الاتصال بقاعدة البيانات: {e}")
+        # Do not echo the connection URL or driver exception (may contain secrets).
+        st.error(f"❌ فشل الاتصال أو قراءة الجدول: {e}")
         return None
 
 def delete_my_account(email):
@@ -467,12 +468,22 @@ with tab_sql:
                 if success:
                     st.code(generated_sql, language="sql")
                     try:
-                        engine = create_engine(sql_db_url)
-                        result_df = pd.read_sql(generated_sql, engine)
+                        from connectors.sql_database import validate_simple_select, _validate_db_url
+                        from sqlalchemy import create_engine, text
+                        _validate_db_url(sql_db_url)
+                        safe_sql = validate_simple_select(generated_sql, sql_table.strip())
+                        engine = create_engine(sql_db_url, pool_pre_ping=True, pool_recycle=300)
+                        try:
+                            with engine.connect() as connection:
+                                result = connection.execute(text(safe_sql))
+                                result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+                        finally:
+                            engine.dispose()
                         st.success(f"✅ ({len(result_df)})")
-                        st.dataframe(result_df)
+                        st.dataframe(result_df, use_container_width=True)
+                        st.caption("Utilisez également un utilisateur SQL disposant uniquement des droits SELECT.")
                     except Exception as e:
-                        st.error(f"❌ {e}")
+                        st.error(f"❌ Requête refusée ou échec de lecture : {e}")
                 else:
                     st.error(generated_sql)
         else:
@@ -480,36 +491,36 @@ with tab_sql:
 
 with tab_opcua:
     st.subheader("🔌 Connexion aux Machines (OPC UA)")
-    st.info("💡 Connectez-vous à un serveur OPC UA pour lire les données des machines en temps réel.")
-    
-    opc_url = st.text_input("URL du serveur OPC UA:", placeholder="opc.tcp://localhost:4840")
-    opc_node = st.text_input("Node ID:", placeholder="ns=2;s=Temperature")
-    
-    if st.button("🔗 Se connecter et lire"):
-        if opc_url and opc_node:
-            with st.spinner("Connexion en cours..."):
-                try:
-                    from connectors.opcua_connector import OPCUAConnector
-                    connector = OPCUAConnector(opc_url, opc_node)
-                    success, msg = connector.connect()
-                    
-                    if success:
-                        st.success(msg)
-                        val, status = connector.read_value()
-                        if val is not None:
-                            st.metric("Valeur lue", val)
-                        else:
-                            st.error(status)
-                        
-                        # بدء البث (Streaming)
-                        if st.button("▶️ Démarrer le streaming (10 sec)"):
-                            data = connector.start_streaming(duration_sec=10, interval_sec=1)
-                            st.write(f"**{len(data)} valeurs collectées.**")
-                        
-                        connector.disconnect()
-                    else:
-                        st.error(msg)
-                except Exception as e:
-                    st.error(f"❌ Erreur: {e}")
-        else:
+    st.info("Connectez-vous à un serveur OPC UA pour lire une valeur ou collecter un court échantillon.")
+    opc_url = st.text_input("URL du serveur OPC UA:", placeholder="opc.tcp://localhost:4840", key="opc_url")
+    opc_node = st.text_input("Node ID:", placeholder="ns=2;s=Temperature", key="opc_node")
+    stream_seconds = st.number_input("Durée de collecte (secondes)", min_value=0, max_value=300, value=10, step=1)
+    interval_seconds = st.number_input("Intervalle (secondes)", min_value=1, max_value=30, value=1, step=1)
+
+    if st.button("🔗 Connecter et lire", key="opcua_read"):
+        if not opc_url or not opc_node:
             st.warning("⚠️ Veuillez entrer l'URL et le Node ID.")
+        else:
+            try:
+                from connectors.opcua_connector import OPCUAConnector
+                connector = OPCUAConnector(opc_url, opc_node)
+                with st.spinner("Connexion et collecte en cours..."):
+                    last_value, collected, status = connector.run_session(
+                        duration_sec=stream_seconds, interval_sec=interval_seconds
+                    )
+                if collected:
+                    st.success(status)
+                    st.metric("Dernière valeur lue", str(last_value))
+                    st.write(f"**{len(collected)} lectures collectées.**")
+                    st.dataframe(pd.DataFrame(collected), use_container_width=True)
+                    st.download_button(
+                        "Télécharger les lectures CSV",
+                        pd.DataFrame(collected).to_csv(index=False).encode("utf-8"),
+                        file_name="opcua_readings.csv",
+                        mime="text/csv",
+                    )
+                else:
+                    st.error(status)
+            except Exception as e:
+                st.error(f"❌ Erreur OPC UA : {type(e).__name__}: {e}")
+
