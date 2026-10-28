@@ -19,3 +19,5 @@ markdown
 sentry-sdk
 extra-streamlit-components
 tenacity
+
+openpyxl
