@@ -11,7 +11,7 @@ import gspread
 import extra_streamlit_components as stx
 from google.oauth2.service_account import Credentials
 from sqlalchemy import create_engine
-from database import init_db, save_file, get_files, delete_file, get_db_connection
+from database import init_db, save_file, get_files, delete_file, get_db_connection, get_file_by_id
 from auth import create_user, verify_user, login_user, logout_user
 from core_engine import DataEngine
 from ai_engine import AIAssistant
@@ -82,7 +82,8 @@ t = {
         "corr_warn": "ℹ️ Besoin de 2 colonnes numériques pour la corrélation.",
         "ai_privacy": "🔒 Confidentialité",
         "ai_toggle": "Autoriser l'IA à analyser les données",
-        "ai_disabled": "⚠️ L'IA est désactivée."
+        "ai_disabled": "⚠️ L'IA est désactivée.",
+        "access_denied": "❌ Accès refusé à ce fichier."
     },
     "AR": {
         "title": "🏭 محلل بيانات المؤسسات (OEE & AI)",
@@ -113,7 +114,8 @@ t = {
         "corr_warn": "ℹ️ تحتاج إلى عمودين رقميين لحساب الارتباط.",
         "ai_privacy": "🔒 الخصوصية",
         "ai_toggle": "السماح للذكاء الاصطناعي بتحليل البيانات",
-        "ai_disabled": "⚠️ الذكاء الاصطناعي معطل."
+        "ai_disabled": "⚠️ الذكاء الاصطناعي معطل.",
+        "access_denied": "❌ وصول مرفوض لهذا الملف."
     }
 }[st.session_state.lang]
 
@@ -152,10 +154,13 @@ def load_from_gsheets(sheet_url):
 
 def load_from_sql(db_url, table_name, limit=10000):
     try:
-        engine = create_engine(db_url)
+        # إضافة timeout=10 ثوانٍ لمنع التعليق
+        engine = create_engine(db_url, connect_args={"connect_timeout": 10})
         df_pd = pd.read_sql(f"SELECT * FROM {table_name} LIMIT {limit};", engine)
         return pl.from_pandas(df_pd)
-    except: return None
+    except Exception as e:
+        st.error(f"❌ فشل الاتصال بقاعدة البيانات: {e}")
+        return None
 
 def delete_my_account(email):
     conn = get_db_connection()
@@ -216,16 +221,23 @@ else:
 st.sidebar.divider()
 st.sidebar.subheader(t["saved_work"])
 files = get_files(current_user)
-if not files: st.sidebar.caption("-")
+if not files: 
+    st.sidebar.caption("-")
 for f in files:
     col1, col2 = st.sidebar.columns([4, 1])
     if col1.button(f"{f[1]}", key=f"load_{f[0]}"):
-        data = json.loads(f[2]) if isinstance(f[2], str) else f[2]
-        st.session_state.df = pl.from_pandas(pd.DataFrame(data))
-        st.session_state.raw_df = st.session_state.df
-        st.rerun()
+        # استخدام الدالة الجديدة للتحقق من الملكية (العزل)
+        file_data = get_file_by_id(f[0], current_user)
+        if file_data:
+            data = json.loads(file_data[2]) if isinstance(file_data[2], str) else file_data[2]
+            st.session_state.df = pl.from_pandas(pd.DataFrame(data))
+            st.session_state.raw_df = st.session_state.df
+            st.rerun()
+        else:
+            st.sidebar.error(t["access_denied"])
     if col2.button("🗑️", key=f"del_{f[0]}"):
-        delete_file(f[0], current_user); st.rerun()
+        if delete_file(f[0], current_user):
+            st.rerun()
 
 # ==========================================
 # 7. الواجهة الرئيسية
@@ -252,7 +264,7 @@ with tab_upload:
             if st.session_state.last_uploaded_sig != file_signature:
                 with st.spinner("..."):
                     try:
-                        # إصلاح: عدم استخدام drop_nulls().unique() الذي يحذف البيانات صامتاً
+                        # إزالة drop_nulls().unique() الذي يحذف البيانات صامتاً
                         if uploaded_file.name.endswith('.csv'):
                             df = pl.read_csv(uploaded_file, infer_schema_length=10000, ignore_errors=True)
                         else:
@@ -294,7 +306,7 @@ with tab_upload:
                 if st.button(t["apply_map"]):
                     if all(v != "-- Ignorer --" for v in mapping.values()):
                         try:
-                            # إصلاح: الاتجاه الصحيح للـ rename
+                            # إصلاح اتجاه rename (من المصدر إلى الهدف)
                             rename_dict = {v: k for k, v in mapping.items() if v != "-- Ignorer --"}
                             df_mapped = st.session_state.raw_df.rename(rename_dict)
                             st.session_state.df = df_mapped
@@ -344,6 +356,7 @@ with tab_dashboard:
         c1.metric("Records / سجلات", f"{stats['records']:,}")
         c2.metric("Total", f"{stats['total']:,.0f}")
 
+        # --- F4: مصفوفة الارتباطات ---
         st.divider()
         st.subheader(t["correlation"])
         corr_matrix = engine.get_correlation_matrix()
@@ -353,6 +366,7 @@ with tab_dashboard:
         else:
             st.info(t["corr_warn"])
 
+        # --- F4: تصدير البيانات ---
         st.divider()
         st.subheader(t["export_data"])
         df_export = st.session_state.df.to_pandas()
@@ -431,7 +445,6 @@ with tab_ai:
                     st.session_state.ai_error = report
                     st.session_state.ai_report = None
         
-        # عرض التقرير إذا كان موجوداً (حتى بعد تحميل PDF)
         if st.session_state.ai_report:
             st.info(st.session_state.ai_report)
             pdf_file = PDFExporter.generate(st.session_state.ai_report, st.session_state.lang)
@@ -466,6 +479,6 @@ with tab_sql:
                     except Exception as e:
                         st.error(f"❌ {e}")
                 else:
-                    st.error(generated_sql) # عرض رسالة الخطأ الأمني
+                    st.error(generated_sql)
         else:
             st.warning("Fill all fields / املأ الحقول")
