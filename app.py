@@ -80,9 +80,9 @@ t = {
         "export_data": "📥 Exporter les Données",
         "correlation": "🔗 Matrice de Corrélation",
         "corr_warn": "ℹ️ Besoin de 2 colonnes numériques pour la corrélation.",
-        "ai_privacy": "🔒 Confidentialité / الخصوصية",
+        "ai_privacy": "🔒 Confidentialité",
         "ai_toggle": "Autoriser l'IA à analyser les données",
-        "ai_disabled": "⚠️ L'IA est désactivée. Activez-la dans la barre latérale."
+        "ai_disabled": "⚠️ L'IA est désactivée."
     },
     "AR": {
         "title": "🏭 محلل بيانات المؤسسات (OEE & AI)",
@@ -113,7 +113,7 @@ t = {
         "corr_warn": "ℹ️ تحتاج إلى عمودين رقميين لحساب الارتباط.",
         "ai_privacy": "🔒 الخصوصية",
         "ai_toggle": "السماح للذكاء الاصطناعي بتحليل البيانات",
-        "ai_disabled": "⚠️ الذكاء الاصطناعي معطل. قم بتفعيله من القائمة الجانبية."
+        "ai_disabled": "⚠️ الذكاء الاصطناعي معطل."
     }
 }[st.session_state.lang]
 
@@ -180,6 +180,8 @@ if 'raw_df' not in st.session_state: st.session_state.raw_df = None
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'user_email' not in st.session_state: st.session_state.user_email = None
 if 'last_uploaded_sig' not in st.session_state: st.session_state.last_uploaded_sig = None
+if 'ai_report' not in st.session_state: st.session_state.ai_report = None
+if 'ai_error' not in st.session_state: st.session_state.ai_error = None
 
 ai_assistant = AIAssistant()
 
@@ -189,7 +191,6 @@ ai_assistant = AIAssistant()
 st.sidebar.title("Enterprise Data Analyzer")
 st.sidebar.info("💾 Sauvegarde automatique activée / الحفظ التلقائي مفعل")
 
-# خيار الخصوصية (F6)
 st.sidebar.divider()
 st.sidebar.subheader(t["ai_privacy"])
 ai_enabled = st.sidebar.checkbox(t["ai_toggle"], value=True)
@@ -251,8 +252,12 @@ with tab_upload:
             if st.session_state.last_uploaded_sig != file_signature:
                 with st.spinner("..."):
                     try:
-                        df = pl.read_csv(uploaded_file, infer_schema_length=10000, ignore_errors=True) if uploaded_file.name.endswith('.csv') else pl.read_excel(uploaded_file)
-                        df = df.drop_nulls().unique()
+                        # إصلاح: عدم استخدام drop_nulls().unique() الذي يحذف البيانات صامتاً
+                        if uploaded_file.name.endswith('.csv'):
+                            df = pl.read_csv(uploaded_file, infer_schema_length=10000, ignore_errors=True)
+                        else:
+                            df = pl.read_excel(uploaded_file)
+                        
                         st.session_state.raw_df = df
                         st.session_state.df = df
                         st.session_state.last_uploaded_sig = file_signature
@@ -289,7 +294,9 @@ with tab_upload:
                 if st.button(t["apply_map"]):
                     if all(v != "-- Ignorer --" for v in mapping.values()):
                         try:
-                            df_mapped = st.session_state.raw_df.rename(mapping)
+                            # إصلاح: الاتجاه الصحيح للـ rename
+                            rename_dict = {v: k for k, v in mapping.items() if v != "-- Ignorer --"}
+                            df_mapped = st.session_state.raw_df.rename(rename_dict)
                             st.session_state.df = df_mapped
                             save_file(current_user, f"Mapped_{uploaded_file.name}", df_mapped.head(5000).to_pandas())
                             st.success(t["map_success"])
@@ -337,7 +344,6 @@ with tab_dashboard:
         c1.metric("Records / سجلات", f"{stats['records']:,}")
         c2.metric("Total", f"{stats['total']:,.0f}")
 
-        # --- F4: مصفوفة الارتباطات ---
         st.divider()
         st.subheader(t["correlation"])
         corr_matrix = engine.get_correlation_matrix()
@@ -347,7 +353,6 @@ with tab_dashboard:
         else:
             st.info(t["corr_warn"])
 
-        # --- F4: تصدير البيانات ---
         st.divider()
         st.subheader(t["export_data"])
         df_export = st.session_state.df.to_pandas()
@@ -420,11 +425,20 @@ with tab_ai:
             with st.spinner("..."):
                 report, success = ai_assistant.generate_report(st.session_state.df, st.session_state.lang)
                 if success:
-                    st.info(report)
-                    pdf_file = PDFExporter.generate(report, st.session_state.lang)
-                    st.download_button(t["download_pdf"], pdf_file, "report.pdf", "application/pdf")
+                    st.session_state.ai_report = report
+                    st.session_state.ai_error = None
                 else:
-                    st.error(report)
+                    st.session_state.ai_error = report
+                    st.session_state.ai_report = None
+        
+        # عرض التقرير إذا كان موجوداً (حتى بعد تحميل PDF)
+        if st.session_state.ai_report:
+            st.info(st.session_state.ai_report)
+            pdf_file = PDFExporter.generate(st.session_state.ai_report, st.session_state.lang)
+            st.download_button(t["download_pdf"], pdf_file, "report.pdf", "application/pdf")
+        
+        if st.session_state.ai_error:
+            st.error(st.session_state.ai_error)
         
         question = st.text_input("Question / سؤال:")
         if st.button("Envoyer / إرسال"):
@@ -452,6 +466,6 @@ with tab_sql:
                     except Exception as e:
                         st.error(f"❌ {e}")
                 else:
-                    st.error(generated_sql)
+                    st.error(generated_sql) # عرض رسالة الخطأ الأمني
         else:
             st.warning("Fill all fields / املأ الحقول")
