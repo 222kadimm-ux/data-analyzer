@@ -2,22 +2,21 @@ import psycopg2
 import streamlit as st
 import pandas as pd
 import json
+from settings import DATABASE_URL
 from tenacity import retry, stop_after_attempt, wait_fixed
-
-# جلب رابط قاعدة البيانات من إعدادات Streamlit السرية
-DB_URL = st.secrets["DATABASE_URL"]
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 def get_db_connection():
-    """دالة اتصال آمنة مع إعادة المحاولة عند الفشل"""
-    return psycopg2.connect(DB_URL)
+    if not DATABASE_URL:
+        st.error("⚠️ DATABASE_URL غير موجود في الإعدادات.")
+        st.stop()
+    return psycopg2.connect(DATABASE_URL)
 
 def init_db():
-    """إنشاء الجداول إذا لم تكن موجودة (يُشغل مرة واحدة)"""
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # جدول المستخدمين مع دور (Role)
+        # إنشاء الجداول بدون مفتاح أجنبي يمنع الزوار
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -27,16 +26,21 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        # جدول الملفات
         cur.execute("""
             CREATE TABLE IF NOT EXISTS user_files (
                 id SERIAL PRIMARY KEY,
-                user_email VARCHAR(255) REFERENCES users(email),
+                user_email VARCHAR(255) NOT NULL,
                 file_name VARCHAR(255),
                 file_data JSONB,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        # إزالة المفتاح الأجنبي إذا كان موجوداً (للقواعد القديمة)
+        cur.execute("""
+            ALTER TABLE user_files DROP CONSTRAINT IF EXISTS user_files_user_email_fkey;
+        """)
+        # إضافة فهرس لتسريع البحث
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_user_files_email ON user_files(user_email);")
         conn.commit()
     except Exception as e:
         st.error(f"خطأ في تهيئة قاعدة البيانات: {e}")
@@ -44,61 +48,38 @@ def init_db():
         cur.close()
         conn.close()
 
-def get_user_role(email):
-    """جلب دور المستخدم (admin أو user)"""
-    conn = get_db_connection()
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT role FROM users WHERE email = %s", (email,))
-        res = cur.fetchone()
-        return res[0] if res else "user"
-    except:
-        return "user"
-    finally:
-        cur.close()
-        conn.close()
-
 def save_file(email, filename, df):
-    """حفظ ملف في قاعدة البيانات (مع تحويله إلى JSON)"""
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        json_data = df.to_json(orient='records')
+        json_data = df.to_json(orient='records', date_format='iso') # إصلاح P0-4
         cur.execute("INSERT INTO user_files (user_email, file_name, file_data) VALUES (%s, %s, %s)", 
                     (email, filename, json_data))
         conn.commit()
         return True
     except Exception as e:
+        st.warning(f"⚠️ تعذر حفظ الملف: {e}") # لا نتجاهل الخطأ بصمت
         return False
     finally:
         cur.close()
         conn.close()
 
 def get_files(email):
-    """جلب الملفات الخاصة بمستخدم معين (عزل البيانات)"""
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # العزل: لا نعيد إلا الملفات التي تنتمي لهذا المستخدم (أو الـ UUID)
-        cur.execute("""
-            SELECT id, file_name, file_data, created_at 
-            FROM user_files 
-            WHERE user_email = %s 
-            ORDER BY created_at DESC
-        """, (email,))
+        cur.execute("SELECT id, file_name, file_data, created_at FROM user_files WHERE user_email = %s ORDER BY created_at DESC", (email,))
         return cur.fetchall()
-    except Exception:
+    except:
         return []
     finally:
         cur.close()
         conn.close()
 
 def delete_file(file_id, email):
-    """حذف ملف (مع التأكد من أنه يخص المستخدم)"""
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # العزل: لا يمكن حذف ملف لا يخص المستخدم
         cur.execute("DELETE FROM user_files WHERE id = %s AND user_email = %s", (file_id, email))
         conn.commit()
         return True
