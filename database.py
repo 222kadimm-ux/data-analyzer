@@ -16,7 +16,6 @@ def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # إنشاء الجداول
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -35,7 +34,6 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        # إزالة المفتاح الأجنبي (للقواعد القديمة) وإضافة فهرس
         cur.execute("ALTER TABLE user_files DROP CONSTRAINT IF EXISTS user_files_user_email_fkey;")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_user_files_email ON user_files(user_email);")
         conn.commit()
@@ -46,7 +44,6 @@ def init_db():
         conn.close()
 
 def get_user_role(email):
-    # الدالة التي كانت مفقودة
     conn = get_db_connection()
     cur = conn.cursor()
     try:
@@ -79,6 +76,7 @@ def get_files(email):
     conn = get_db_connection()
     cur = conn.cursor()
     try:
+        # العزل: جلب ملفات هذا المستخدم فقط
         cur.execute("SELECT id, file_name, file_data, created_at FROM user_files WHERE user_email = %s ORDER BY created_at DESC", (email,))
         return cur.fetchall()
     except:
@@ -87,7 +85,21 @@ def get_files(email):
         cur.close()
         conn.close()
 
+def get_file_by_id(file_id, email):
+    # العزل: جلب ملف محدد مع التحقق من أنه يخص المستخدم
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT id, file_name, file_data FROM user_files WHERE id = %s AND user_email = %s", (file_id, email))
+        return cur.fetchone()
+    except:
+        return None
+    finally:
+        cur.close()
+        conn.close()
+
 def delete_file(file_id, email):
+    # العزل: الحذف فقط إذا كان الملف يخص المستخدم
     conn = get_db_connection()
     cur = conn.cursor()
     try:
