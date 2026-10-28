@@ -10,7 +10,6 @@ class DataEngine:
         numeric_cols = [c for c in self.df.columns if self.df[c].dtype in [pl.Float64, pl.Int64]]
         if not numeric_cols:
             return {"records": self.df.height, "total": 0}
-        
         total = self.df[numeric_cols[0]].sum()
         return {"records": self.df.height, "total": total}
 
@@ -20,6 +19,17 @@ class DataEngine:
         if not all(c in df.columns for c in req):
             return None, "Colonnes OEE manquantes"
         
+        # التحقق من القيم السالبة والفارغة
+        for col in req:
+            if df[col].isnull().any():
+                return None, f"Valeurs manquantes dans {col}"
+            if (df[col] < 0).any():
+                return None, f"Valeurs négatives dans {col}"
+        if (df['Good_Count'] > df['Total_Count']).any():
+            return None, "Good_Count > Total_Count"
+        if (df['Planned_Time_Mins'] == 0).any():
+            return None, "Planned_Time_Mins = 0"
+
         try:
             df['Run_Time'] = df['Planned_Time_Mins'] - df['Downtime_Mins']
             df['Availability'] = df['Run_Time'] / df['Planned_Time_Mins']
@@ -28,11 +38,22 @@ class DataEngine:
             df['Quality'] = df['Good_Count'] / df['Total_Count']
             df['OEE'] = df['Availability'] * df['Performance'] * df['Quality']
             
+            # استخدام المتوسط الموزون (وليس متوسط النسب)
+            total_planned = df['Planned_Time_Mins'].sum()
+            total_run = df['Run_Time'].sum()
+            total_ideal = df['Ideal_Time'].sum()
+            total_good = df['Good_Count'].sum()
+            total_count = df['Total_Count'].sum()
+            
+            availability = (total_run / total_planned) * 100
+            performance = (total_ideal / total_run) * 100
+            quality = (total_good / total_count) * 100
+            
             return {
-                "availability": df['Availability'].mean() * 100,
-                "performance": df['Performance'].mean() * 100,
-                "quality": df['Quality'].mean() * 100,
-                "oee": df['OEE'].mean() * 100
+                "availability": availability,
+                "performance": performance,
+                "quality": quality,
+                "oee": (availability * performance * quality) / 10000
             }, None
         except Exception as e:
             return None, str(e)
@@ -44,25 +65,18 @@ class DataEngine:
             prophet_df['ds'] = pd.to_datetime(prophet_df['ds'], errors='coerce')
             prophet_df = prophet_df.dropna(subset=['ds']).groupby('ds').sum().reset_index()
             
-            # تحسين F5: اكتشاف التردد تلقائياً (يومي، أسبوعي، شهري)
-            if len(prophet_df) > 1:
-                diff = (prophet_df['ds'].iloc[1] - prophet_df['ds'].iloc[0]).days
-                if diff <= 1: freq = 'D'
-                elif diff <= 7: freq = 'W'
-                else: freq = 'ME'
-            else:
-                freq = 'ME'
+            if len(prophet_df) < 2:
+                return None, None, "Besoin d'au moins 2 points de données."
             
             m = Prophet()
             m.fit(prophet_df)
-            future = m.make_future_dataframe(periods=periods, freq=freq)
+            future = m.make_future_dataframe(periods=periods, freq='ME')
             forecast = m.predict(future)
             return m, forecast, None
         except Exception as e:
             return None, None, str(e)
 
     def get_correlation_matrix(self):
-        # إضافة F4: مصفوفة الارتباطات
         df = self.df.to_pandas()
         numeric_df = df.select_dtypes(include=['number'])
         if len(numeric_df.columns) < 2:
