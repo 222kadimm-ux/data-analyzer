@@ -12,6 +12,7 @@ openai
 openrouter
 gspread
 google-auth
+psycopg2-binary
 sqlalchemy
 prophet
 weasyprint
