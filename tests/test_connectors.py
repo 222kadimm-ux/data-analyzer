@@ -23,3 +23,21 @@ def test_csv_connector_too_large():
     connector = CSVExcelConnector(mock_file)
     with pytest.raises(ValueError, match="الحد الأقصى"):
         connector.load_data()
+
+
+def test_sql_query_validator_accepts_only_selected_table():
+    from connectors.sql_database import validate_simple_select
+    safe = validate_simple_select("SELECT id, amount FROM production_data WHERE amount > 10", "production_data")
+    assert safe.endswith("LIMIT 1000")
+
+
+def test_sql_query_validator_rejects_multiple_statements():
+    from connectors.sql_database import validate_simple_select
+    with pytest.raises(ValueError):
+        validate_simple_select("SELECT * FROM production_data; DROP TABLE users", "production_data")
+
+
+def test_sql_query_validator_rejects_other_table():
+    from connectors.sql_database import validate_simple_select
+    with pytest.raises(ValueError):
+        validate_simple_select("SELECT * FROM users", "production_data")
