@@ -5,7 +5,7 @@ import plotly.express as px
 import io
 import json
 import uuid
-import time
+import datetime
 import sentry_sdk
 import gspread
 import extra_streamlit_components as stx
@@ -112,7 +112,7 @@ t = {
 }[st.session_state.lang]
 
 # ==========================================
-# 3. إدارة الكوكيز
+# 3. إدارة الكوكيز (إصلاح الخطأ)
 # ==========================================
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
@@ -123,7 +123,9 @@ if 'anon_uuid' not in st.session_state:
     else:
         if cookie_manager.get_all() is not None:
             new_uuid = str(uuid.uuid4())
-            cookie_manager.set("anon_uuid", new_uuid, expires_at=time.time() + 365*24*60*60)
+            # إصلاح: استخدام datetime بدلاً من time
+            expiry_date = datetime.datetime.now() + datetime.timedelta(days=365)
+            cookie_manager.set("anon_uuid", new_uuid, expires_at=expiry_date)
             st.session_state.anon_uuid = new_uuid
         else:
             st.stop()
