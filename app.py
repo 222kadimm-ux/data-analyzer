@@ -61,6 +61,7 @@ t = {
         "forecast_tab": "4️⃣ Prévisions",
         "ai_tab": "5️⃣ Assistant IA",
         "sql_tab": "6️⃣ Requête SQL",
+        "opcua_tab": "7️⃣ Machines (OPC UA)",
         "file_upload": "Choisir un fichier Excel ou CSV",
         "no_data": "⚠️ Veuillez importer des données d'abord.",
         "saved_work": "🗂️ Vos fichiers précédents",
@@ -93,6 +94,7 @@ t = {
         "forecast_tab": "4️⃣ التنبؤ بالمستقبل",
         "ai_tab": "5️⃣ المساعد الذكي",
         "sql_tab": "6️⃣ اسأل SQL",
+        "opcua_tab": "7️⃣ الآلات (OPC UA)",
         "file_upload": "اختر ملف Excel أو CSV",
         "no_data": "⚠️ يرجى رفع البيانات أولاً.",
         "saved_work": "🗂️ ملفاتك السابقة",
@@ -154,7 +156,6 @@ def load_from_gsheets(sheet_url):
 
 def load_from_sql(db_url, table_name, limit=10000):
     try:
-        # إضافة timeout=10 ثوانٍ لمنع التعليق
         engine = create_engine(db_url, connect_args={"connect_timeout": 10})
         df_pd = pd.read_sql(f"SELECT * FROM {table_name} LIMIT {limit};", engine)
         return pl.from_pandas(df_pd)
@@ -226,7 +227,6 @@ if not files:
 for f in files:
     col1, col2 = st.sidebar.columns([4, 1])
     if col1.button(f"{f[1]}", key=f"load_{f[0]}"):
-        # استخدام الدالة الجديدة للتحقق من الملكية (العزل)
         file_data = get_file_by_id(f[0], current_user)
         if file_data:
             data = json.loads(file_data[2]) if isinstance(file_data[2], str) else file_data[2]
@@ -247,7 +247,7 @@ st.write("Solution professionnelle pour l'analyse des données industrielles et 
 
 st.divider()
 
-tab_upload, tab_dashboard, tab_oee, tab_forecast, tab_ai, tab_sql = st.tabs([t["upload_tab"], t["dashboard_tab"], t["oee_tab"], t["forecast_tab"], t["ai_tab"], t["sql_tab"]])
+tab_upload, tab_dashboard, tab_oee, tab_forecast, tab_ai, tab_sql, tab_opcua = st.tabs([t["upload_tab"], t["dashboard_tab"], t["oee_tab"], t["forecast_tab"], t["ai_tab"], t["sql_tab"], t["opcua_tab"]])
 
 with tab_upload:
     option = st.radio("Source de données", ["Fichier / ملف", "Google Sheets", "SQL"])
@@ -264,7 +264,6 @@ with tab_upload:
             if st.session_state.last_uploaded_sig != file_signature:
                 with st.spinner("..."):
                     try:
-                        # إزالة drop_nulls().unique() الذي يحذف البيانات صامتاً
                         if uploaded_file.name.endswith('.csv'):
                             df = pl.read_csv(uploaded_file, infer_schema_length=10000, ignore_errors=True)
                         else:
@@ -280,7 +279,6 @@ with tab_upload:
             else:
                 st.info("ℹ️ الملف مرفوع بالفعل.")
 
-        # --- ميزة ربط الأعمدة (F1) ---
         if st.session_state.raw_df is not None:
             with st.expander(t["map_btn"], expanded=False):
                 cols = st.session_state.raw_df.columns
@@ -306,7 +304,6 @@ with tab_upload:
                 if st.button(t["apply_map"]):
                     if all(v != "-- Ignorer --" for v in mapping.values()):
                         try:
-                            # إصلاح اتجاه rename (من المصدر إلى الهدف)
                             rename_dict = {v: k for k, v in mapping.items() if v != "-- Ignorer --"}
                             df_mapped = st.session_state.raw_df.rename(rename_dict)
                             st.session_state.df = df_mapped
@@ -356,7 +353,6 @@ with tab_dashboard:
         c1.metric("Records / سجلات", f"{stats['records']:,}")
         c2.metric("Total", f"{stats['total']:,.0f}")
 
-        # --- F4: مصفوفة الارتباطات ---
         st.divider()
         st.subheader(t["correlation"])
         corr_matrix = engine.get_correlation_matrix()
@@ -366,7 +362,6 @@ with tab_dashboard:
         else:
             st.info(t["corr_warn"])
 
-        # --- F4: تصدير البيانات ---
         st.divider()
         st.subheader(t["export_data"])
         df_export = st.session_state.df.to_pandas()
@@ -482,3 +477,39 @@ with tab_sql:
                     st.error(generated_sql)
         else:
             st.warning("Fill all fields / املأ الحقول")
+
+with tab_opcua:
+    st.subheader("🔌 Connexion aux Machines (OPC UA)")
+    st.info("💡 Connectez-vous à un serveur OPC UA pour lire les données des machines en temps réel.")
+    
+    opc_url = st.text_input("URL du serveur OPC UA:", placeholder="opc.tcp://localhost:4840")
+    opc_node = st.text_input("Node ID:", placeholder="ns=2;s=Temperature")
+    
+    if st.button("🔗 Se connecter et lire"):
+        if opc_url and opc_node:
+            with st.spinner("Connexion en cours..."):
+                try:
+                    from connectors.opcua_connector import OPCUAConnector
+                    connector = OPCUAConnector(opc_url, opc_node)
+                    success, msg = connector.connect()
+                    
+                    if success:
+                        st.success(msg)
+                        val, status = connector.read_value()
+                        if val is not None:
+                            st.metric("Valeur lue", val)
+                        else:
+                            st.error(status)
+                        
+                        # بدء البث (Streaming)
+                        if st.button("▶️ Démarrer le streaming (10 sec)"):
+                            data = connector.start_streaming(duration_sec=10, interval_sec=1)
+                            st.write(f"**{len(data)} valeurs collectées.**")
+                        
+                        connector.disconnect()
+                    else:
+                        st.error(msg)
+                except Exception as e:
+                    st.error(f"❌ Erreur: {e}")
+        else:
+            st.warning("⚠️ Veuillez entrer l'URL et le Node ID.")
