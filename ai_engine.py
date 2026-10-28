@@ -12,32 +12,36 @@ class AIAssistant:
 
     def _call_api(self, prompt):
         if not self.api_key:
-            return "⚠️ API Key missing."
+            return "⚠️ API Key missing.", False
         
         data = {
             "model": "openrouter/free",
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3
+            "temperature": 0.2
         }
         try:
-            # إضافة timeout=30 لمنع التجمد
-            response = requests.post(self.url, headers=self.headers, json=data, timeout=30)
+            response = requests.post(self.url, headers=self.headers, json=data)
             response.raise_for_status()
-            return response.json()['choices'][0]['message']['content']
-        except requests.exceptions.Timeout:
-            return "⚠️ انتهت مهلة الاتصال بالذكاء الاصطناعي."
+            return response.json()['choices'][0]['message']['content'], True
         except Exception as e:
-            return f"Error: {e}"
+            return f"Error: {e}", False
 
     def generate_report(self, df_polars, lang="FR"):
-        # إصلاح: استخدام df_polars بدلاً من df_polar
+        # إرسال هيكل البيانات والإحصائيات (وليس الملف كاملاً)
         df_pandas = df_polars.head(1000).to_pandas()
+        columns = df_pandas.columns.tolist()
         stats = df_pandas.describe().to_string()
+        sample = df_pandas.head(5).to_string()
+        
+        lang_name = {"FR": "Français", "AR": "Arabe", "EN": "Anglais"}.get(lang, "Français")
+        
         prompt = f"""
-        Tu es un analyste de données senior. 
-        Voici les statistiques:
-        {stats}
-        Donne un rapport de 200 mots et 3 recommandations en {'Français' if lang == 'FR' else 'Arabe'}.
+        Tu es un analyste de données. Voici les informations sur les données:
+        - Colonnes: {columns}
+        - Statistiques: {stats}
+        - Échantillon (5 lignes): {sample}
+        
+        Donne-moi un rapport complet en {lang_name} avec 3 recommandations.
         """
         return self._call_api(prompt)
 
