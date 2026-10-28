@@ -16,7 +16,7 @@ def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # إنشاء الجداول بدون مفتاح أجنبي يمنع الزوار
+        # إنشاء الجداول
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -35,11 +35,8 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        # إزالة المفتاح الأجنبي إذا كان موجوداً (للقواعد القديمة)
-        cur.execute("""
-            ALTER TABLE user_files DROP CONSTRAINT IF EXISTS user_files_user_email_fkey;
-        """)
-        # إضافة فهرس لتسريع البحث
+        # إزالة المفتاح الأجنبي (للقواعد القديمة) وإضافة فهرس
+        cur.execute("ALTER TABLE user_files DROP CONSTRAINT IF EXISTS user_files_user_email_fkey;")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_user_files_email ON user_files(user_email);")
         conn.commit()
     except Exception as e:
@@ -48,17 +45,31 @@ def init_db():
         cur.close()
         conn.close()
 
+def get_user_role(email):
+    # الدالة التي كانت مفقودة
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT role FROM users WHERE email = %s", (email,))
+        res = cur.fetchone()
+        return res[0] if res else "user"
+    except Exception:
+        return "user"
+    finally:
+        cur.close()
+        conn.close()
+
 def save_file(email, filename, df):
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        json_data = df.to_json(orient='records', date_format='iso') # إصلاح P0-4
+        json_data = df.to_json(orient='records', date_format='iso')
         cur.execute("INSERT INTO user_files (user_email, file_name, file_data) VALUES (%s, %s, %s)", 
                     (email, filename, json_data))
         conn.commit()
         return True
     except Exception as e:
-        st.warning(f"⚠️ تعذر حفظ الملف: {e}") # لا نتجاهل الخطأ بصمت
+        st.warning(f"⚠️ تعذر حفظ الملف: {e}")
         return False
     finally:
         cur.close()
