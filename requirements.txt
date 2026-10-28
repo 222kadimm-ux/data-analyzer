@@ -21,3 +21,4 @@ extra-streamlit-components
 tenacity
 
 openpyxl
+asyncua
