@@ -1,0 +1,29 @@
+name: Machine Monitoring & Reporting
+
+on:
+  schedule:
+    - cron: '0 * * * *' # كل ساعة
+  workflow_dispatch: # أو يدوياً
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install asyncua resend psycopg2-binary
+    - name: Run Monitoring
+      env:
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      run: python monitor_machine.py
+    - name: Run Daily Report (at 8 AM)
+      if: github.event.schedule == '0 8 * * *'
+      env:
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      run: python daily_report.py
