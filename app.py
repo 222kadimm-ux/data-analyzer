@@ -10,7 +10,8 @@ import sentry_sdk
 import gspread
 import extra_streamlit_components as stx
 from google.oauth2.service_account import Credentials
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text as sql_text
+from connectors.sql_database import validate_simple_select
 from database import init_db, save_file, get_files, delete_file, get_db_connection, get_file_by_id
 from auth import create_user, verify_user, login_user, logout_user
 from core_engine import DataEngine
@@ -464,20 +465,27 @@ with tab_sql:
     sql_db_url = st.text_input(t["sql_url"], type="password", key="sql_db")
     sql_table = st.text_input(t["sql_table"], key="sql_table")
     sql_question = st.text_input(t["sql_question"], key="sql_q")
-    
+
     if st.button(t["sql_generate"]):
         if sql_db_url and sql_table and sql_question:
             with st.spinner("..."):
                 generated_sql, success = ai_assistant.generate_sql(sql_question, sql_table)
                 if success:
                     st.code(generated_sql, language="sql")
+                    db_engine = None
                     try:
-                        engine = create_engine(sql_db_url)
-                        result_df = pd.read_sql(generated_sql, engine)
-                        st.success(f"✅ ({len(result_df)})")
-                        st.dataframe(result_df)
-                    except Exception as e:
-                        st.error(f"❌ {e}")
+                        checked_sql = validate_simple_select(generated_sql, sql_table.strip())
+                        db_engine = create_engine(sql_db_url, pool_pre_ping=True, pool_recycle=300)
+                        with db_engine.connect() as connection:
+                            result = connection.execute(sql_text(checked_sql))
+                            result_df = pd.DataFrame(result.fetchall(), columns=result.keys())
+                        st.success(f"✅ ({len(result_df)} lignes)")
+                        st.dataframe(result_df, use_container_width=True)
+                    except Exception as exc:
+                        st.error(f"❌ Requête non exécutée : {exc}")
+                    finally:
+                        if db_engine is not None:
+                            db_engine.dispose()
                 else:
                     st.error(generated_sql)
         else:
@@ -485,35 +493,31 @@ with tab_sql:
 
 with tab_opcua:
     st.subheader("🔌 Connexion aux Machines (OPC UA)")
-    st.info("💡 Connectez-vous à un serveur OPC UA pour lire les données des machines en temps réel.")
-    
-    opc_url = st.text_input("URL du serveur OPC UA:", placeholder="opc.tcp://localhost:4840")
-    opc_node = st.text_input("Node ID:", placeholder="ns=2;s=Temperature")
-    
-    if st.button("🔗 Se connecter et lire"):
+    st.info("💡 Lance une lecture continue de 10 secondes sur le serveur OPC UA, puis affiche les valeurs collectées.")
+
+    opc_url = st.text_input("URL du serveur OPC UA:", placeholder="opc.tcp://localhost:4840", key="opc_url")
+    opc_node = st.text_input("Node ID:", placeholder="ns=2;s=Temperature", key="opc_node")
+
+    if st.button("🔗 Se connecter et lire pendant 10 secondes", key="opc_read_stream"):
         if opc_url and opc_node:
-            with st.spinner("Connexion en cours..."):
+            with st.spinner("Connexion et lecture en cours..."):
                 try:
                     from connectors.opcua_connector import OPCUAConnector
                     connector = OPCUAConnector(opc_url, opc_node)
-                    success, msg = connector.connect()
-                    
-                    if success:
-                        st.success(msg)
-                        val, status = connector.read_value()
-                        if val is not None:
-                            st.metric("Valeur lue", val)
-                        else:
-                            st.error(status)
-                        
-                        if st.button("▶️ Démarrer le streaming (10 sec)"):
-                            data = connector.start_streaming(duration_sec=10, interval_sec=1)
-                            st.write(f"**{len(data)} valeurs collectées.**")
-                        
-                        connector.disconnect()
+                    data = connector.start_streaming(duration_sec=10, interval_sec=1)
+                    if data:
+                        machine_df = pd.DataFrame(data)
+                        machine_df["timestamp"] = pd.to_datetime(machine_df["timestamp"], unit="s", errors="coerce")
+                        st.success(f"✅ {len(machine_df)} valeurs collectées.")
+                        st.metric("Dernière valeur lue", str(machine_df["value"].iloc[-1]))
+                        machine_df["value_numeric"] = pd.to_numeric(machine_df["value"], errors="coerce")
+                        chart_df = machine_df.dropna(subset=["timestamp", "value_numeric"])
+                        if not chart_df.empty:
+                            st.line_chart(chart_df.set_index("timestamp")["value_numeric"])
+                        st.dataframe(machine_df, use_container_width=True)
                     else:
-                        st.error(msg)
-                except Exception as e:
-                    st.error(f"❌ Erreur: {e}")
+                        st.warning("Aucune valeur n'a été reçue du serveur OPC UA.")
+                except Exception as exc:
+                    st.error(f"❌ Erreur OPC UA : {exc}")
         else:
             st.warning("⚠️ Veuillez entrer l'URL et le Node ID.")
