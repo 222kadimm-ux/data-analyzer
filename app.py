@@ -90,7 +90,7 @@ t = {
         "ai_toggle": "Autoriser l'IA à analyser les données",
         "ai_disabled": "⚠️ L'IA est désactivée.",
         "access_denied": "❌ Accès refusé à ce fichier.",
-        "opcua_download": "📥 Télécharger le rapport PDF (OPC UA)",
+        "opcua_download": "📥 Générer le rapport PDF",
         "opcua_ai": "🤖 Analyser avec l'IA"
     },
     "AR": {
@@ -125,7 +125,7 @@ t = {
         "ai_toggle": "السماح للذكاء الاصطناعي بتحليل البيانات",
         "ai_disabled": "⚠️ الذكاء الاصطناعي معطل.",
         "access_denied": "❌ وصول مرفوض لهذا الملف.",
-        "opcua_download": "📥 تحميل تقرير PDF (OPC UA)",
+        "opcua_download": "📥 توليد تقرير PDF",
         "opcua_ai": "🤖 تحليل بالذكاء الاصطناعي"
     }
 }[st.session_state.lang]
@@ -201,6 +201,7 @@ if 'user_email' not in st.session_state: st.session_state.user_email = None
 if 'last_uploaded_sig' not in st.session_state: st.session_state.last_uploaded_sig = None
 if 'ai_report' not in st.session_state: st.session_state.ai_report = None
 if 'ai_error' not in st.session_state: st.session_state.ai_error = None
+if 'opcua_pdf' not in st.session_state: st.session_state.opcua_pdf = None
 
 ai_assistant = AIAssistant()
 
@@ -529,7 +530,7 @@ with tab_opcua:
                             st.line_chart(chart_df.set_index("timestamp")["value_numeric"])
                         st.dataframe(machine_df, use_container_width=True)
 
-                        # --- أزرار OPC UA الجديدة ---
+                        # --- أزرار OPC UA ---
                         st.divider()
                         col1, col2 = st.columns(2)
                         
@@ -537,9 +538,12 @@ with tab_opcua:
                             if st.button(t["opcua_download"]):
                                 report_text = f"Rapport OPC UA\n\nServeur: {opc_url}\nNode: {opc_node}\n\nValeurs lues:\n{machine_df.to_string()}"
                                 pdf_file = PDFExporter.generate(report_text, st.session_state.lang)
+                                st.session_state.opcua_pdf = pdf_file
+                            
+                            if st.session_state.opcua_pdf:
                                 st.download_button(
-                                    label="Cliquez ici pour télécharger",
-                                    data=pdf_file,
+                                    label="📥 Cliquez ici pour télécharger",
+                                    data=st.session_state.opcua_pdf,
                                     file_name="rapport_opcua.pdf",
                                     mime="application/pdf"
                                 )
