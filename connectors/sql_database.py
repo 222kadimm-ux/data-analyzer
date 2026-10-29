@@ -115,8 +115,15 @@ def validate_simple_select(sql: str, expected_table: str) -> str:
     if len(matches) != 1:
         raise ValueError("La requête doit lire une seule table.")
     actual = matches[0].group(1).replace('"', '').replace('`', '')
+    # Accept either the exact schema.table name or the table component when
+    # the SQL dialect omits schema qualification in the generated query.
+    actual_parts = actual.split(".")
+    expected_parts = expected_table.split(".")
     if actual.lower() != expected_table.lower():
-        raise ValueError("La requête doit utiliser uniquement la table sélectionnée.")
+        if len(expected_parts) == 2 and len(actual_parts) == 1 and actual_parts[0].lower() == expected_parts[-1].lower():
+            pass
+        else:
+            raise ValueError("La requête doit utiliser uniquement la table sélectionnée.")
     if re.search(r"(?i)\b(limit|fetch|top)\b", query) is None:
         query += " LIMIT 1000"
     else:
