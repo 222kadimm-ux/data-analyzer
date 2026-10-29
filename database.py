@@ -16,6 +16,7 @@ def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
     try:
+        # 1. جدول المستخدمين
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -25,6 +26,8 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        
+        # 2. جدول الملفات
         cur.execute("""
             CREATE TABLE IF NOT EXISTS user_files (
                 id SERIAL PRIMARY KEY,
@@ -34,8 +37,21 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+        
+        # 3. الجديد: جدول سجلات الآلات (OPC UA)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS machine_logs (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                machine_name VARCHAR(255),
+                value TEXT
+            );
+        """)
+        
+        # 4. إزالة المفتاح الأجنبي القديم وإضافة فهرس
         cur.execute("ALTER TABLE user_files DROP CONSTRAINT IF EXISTS user_files_user_email_fkey;")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_user_files_email ON user_files(user_email);")
+        
         conn.commit()
     except Exception as e:
         st.error(f"خطأ في تهيئة قاعدة البيانات: {e}")
@@ -76,7 +92,6 @@ def get_files(email):
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # العزل: جلب ملفات هذا المستخدم فقط
         cur.execute("SELECT id, file_name, file_data, created_at FROM user_files WHERE user_email = %s ORDER BY created_at DESC", (email,))
         return cur.fetchall()
     except:
@@ -86,7 +101,6 @@ def get_files(email):
         conn.close()
 
 def get_file_by_id(file_id, email):
-    # العزل: جلب ملف محدد مع التحقق من أنه يخص المستخدم
     conn = get_db_connection()
     cur = conn.cursor()
     try:
@@ -99,7 +113,6 @@ def get_file_by_id(file_id, email):
         conn.close()
 
 def delete_file(file_id, email):
-    # العزل: الحذف فقط إذا كان الملف يخص المستخدم
     conn = get_db_connection()
     cur = conn.cursor()
     try:
