@@ -7,11 +7,32 @@ class DataEngine:
         self.df = df_polars
 
     def get_basic_stats(self):
-        numeric_cols = [c for c in self.df.columns if self.df[c].dtype in [pl.Float64, pl.Int64]]
-        if not numeric_cols:
-            return {"records": self.df.height, "total": 0}
-        total = self.df[numeric_cols[0]].sum()
-        return {"records": self.df.height, "total": total}
+        """Return dashboard metrics while preserving the existing records/total keys."""
+        numeric_cols = [
+            col for col, dtype in zip(self.df.columns, self.df.dtypes)
+            if dtype.is_numeric()
+        ]
+        total = 0.0
+        if numeric_cols:
+            value = self.df[numeric_cols[0]].sum()
+            total = float(value) if value is not None else 0.0
+            if not np.isfinite(total):
+                total = 0.0
+
+        stats = {
+            "records": int(self.df.height),
+            "total": total,
+            "columns": int(len(self.df.columns)),
+            "numeric_columns": int(len(numeric_cols)),
+        }
+        if self.df.height > 0 and self.df.width > 0:
+            pdf = self.df.to_pandas()
+            stats["missing_values"] = int(pdf.isna().sum().sum())
+            stats["duplicate_rows"] = int(pdf.duplicated().sum())
+        else:
+            stats["missing_values"] = 0
+            stats["duplicate_rows"] = 0
+        return stats
 
     def calculate_oee(self):
         """Calculate OEE after validating all inputs and edge cases.
@@ -66,24 +87,39 @@ class DataEngine:
             "performance_over_100_warning": performance > 100.0,
         }, None
 
-    def generate_forecast(self, date_col, value_col, periods=3):
+    def generate_forecast(self, date_col, value_col, periods=3, freq="ME"):
+        """Fit a Prophet forecast after cleaning dates and numeric values."""
         try:
             from prophet import Prophet
+
+            if date_col not in self.df.columns or value_col not in self.df.columns:
+                return None, None, "Colonne Date ou valeur introuvable."
+            try:
+                periods = int(periods)
+            except (TypeError, ValueError):
+                return None, None, "Le nombre de périodes doit être un entier."
+            if periods < 1 or periods > 365:
+                return None, None, "Le nombre de périodes doit être compris entre 1 et 365."
+
             prophet_df = self.df.to_pandas()[[date_col, value_col]].copy()
-            prophet_df.columns = ['ds', 'y']
-            prophet_df['ds'] = pd.to_datetime(prophet_df['ds'], errors='coerce')
-            prophet_df = prophet_df.dropna(subset=['ds']).groupby('ds').sum().reset_index()
-            
+            prophet_df.columns = ["ds", "y"]
+            prophet_df["ds"] = pd.to_datetime(prophet_df["ds"], errors="coerce")
+            prophet_df["y"] = pd.to_numeric(prophet_df["y"], errors="coerce")
+            prophet_df = prophet_df.replace([np.inf, -np.inf], np.nan).dropna(subset=["ds", "y"])
+            prophet_df = prophet_df.groupby("ds", as_index=False)["y"].mean().sort_values("ds")
+
             if len(prophet_df) < 2:
                 return None, None, "Besoin d'au moins 2 points de données valides."
-            
-            m = Prophet()
-            m.fit(prophet_df)
-            future = m.make_future_dataframe(periods=periods, freq='ME')
-            forecast = m.predict(future)
-            return m, forecast, None
-        except Exception as e:
-            return None, None, str(e)
+            if prophet_df["y"].nunique() < 1:
+                return None, None, "Les valeurs ne permettent pas de générer une prévision."
+
+            model = Prophet()
+            model.fit(prophet_df)
+            future = model.make_future_dataframe(periods=periods, freq=freq)
+            forecast = model.predict(future)
+            return model, forecast, None
+        except Exception as exc:
+            return None, None, f"Échec de la prévision : {exc}"
 
     def get_correlation_matrix(self):
         df = self.df.to_pandas()
