@@ -19,7 +19,7 @@ from pdf_exporter import PDFExporter
 from settings import SENTRY_DSN, DATABASE_URL
 
 # ==========================================
-# 1. إعدادات الصفحة والمراقبة (مع حماية Sentry)
+# 1. إعدادات الصفحة والمراقبة
 # ==========================================
 try:
     import sentry_sdk
@@ -89,7 +89,9 @@ t = {
         "ai_privacy": "🔒 Confidentialité",
         "ai_toggle": "Autoriser l'IA à analyser les données",
         "ai_disabled": "⚠️ L'IA est désactivée.",
-        "access_denied": "❌ Accès refusé à ce fichier."
+        "access_denied": "❌ Accès refusé à ce fichier.",
+        "opcua_download": "📥 Télécharger le rapport PDF (OPC UA)",
+        "opcua_ai": "🤖 Analyser avec l'IA"
     },
     "AR": {
         "title": "🏭 محلل بيانات المؤسسات (OEE & AI)",
@@ -122,7 +124,9 @@ t = {
         "ai_privacy": "🔒 الخصوصية",
         "ai_toggle": "السماح للذكاء الاصطناعي بتحليل البيانات",
         "ai_disabled": "⚠️ الذكاء الاصطناعي معطل.",
-        "access_denied": "❌ وصول مرفوض لهذا الملف."
+        "access_denied": "❌ وصول مرفوض لهذا الملف.",
+        "opcua_download": "📥 تحميل تقرير PDF (OPC UA)",
+        "opcua_ai": "🤖 تحليل بالذكاء الاصطناعي"
     }
 }[st.session_state.lang]
 
@@ -188,7 +192,7 @@ def delete_my_account(email):
 if 'db_initialized' not in st.session_state:
     st.session_state.db_initialized = init_db()
 if not st.session_state.db_initialized:
-    st.sidebar.warning("وضع التشغيل التجريبي: DATABASE_URL غير مضبوط. تحليل Excel/CSV متاح، لكن حفظ الملفات وتسجيل الدخول يحتاجان قاعدة PostgreSQL.")
+    st.sidebar.warning("وضع التشغيل التجريبي: DATABASE_URL غير مضبوط.")
 
 if 'df' not in st.session_state: st.session_state.df = None
 if 'raw_df' not in st.session_state: st.session_state.raw_df = None
@@ -204,7 +208,7 @@ ai_assistant = AIAssistant()
 # 6. القائمة الجانبية
 # ==========================================
 st.sidebar.title("Enterprise Data Analyzer")
-st.sidebar.info("💾 حفظ دائم مفعّل / Sauvegarde permanente activée" if DATABASE_URL else "🧪 وضع تجريبي: التحليل يعمل، لكن الحفظ الدائم يحتاج قاعدة بيانات / Demo mode: persistent storage requires a database.")
+st.sidebar.info("💾 حفظ دائم مفعّل" if DATABASE_URL else "🧪 وضع تجريبي.")
 
 st.sidebar.divider()
 st.sidebar.subheader(t["ai_privacy"])
@@ -225,7 +229,7 @@ if not st.session_state.logged_in and DATABASE_URL:
             if len(new_pass) < 6: st.warning("Short / قصيرة")
             elif create_user(new_email, new_pass): st.success("✅"); st.rerun()
 elif not DATABASE_URL:
-    st.sidebar.caption("تسجيل الدخول معطّل حتى إعداد DATABASE_URL.")
+    st.sidebar.caption("تسجيل الدخول معطّل.")
 else:
     st.sidebar.write(f"👤 {st.session_state.user_email}")
     if st.sidebar.button(t["logout"]): logout_user()
@@ -394,7 +398,7 @@ with tab_oee:
         oee_data, error = engine.calculate_oee()
         if error:
             st.warning(f"⚠️ {error}")
-            st.info("💡 **Suggestion:** Vos données ne contiennent pas les colonnes OEE. Voulez-vous analyser une autre métrique ?" if st.session_state.lang == "FR" else "💡 **اقتراح:** بياناتك لا تحتوي على أعمدة OEE. هل تريد تحليل مقياس آخر؟")
+            st.info("💡 **Suggestion:** Vos données ne contiennent pas les colonnes OEE." if st.session_state.lang == "FR" else "💡 **اقتراح:** بياناتك لا تحتوي على أعمدة OEE.")
             
             df = st.session_state.df.to_pandas()
             numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
@@ -504,8 +508,8 @@ with tab_opcua:
     st.subheader("🔌 Connexion aux Machines (OPC UA)")
     st.info("💡 Lance une lecture continue de 10 secondes sur le serveur OPC UA, puis affiche les valeurs collectées.")
 
-    opc_url = st.text_input("URL du serveur OPC UA:", value="opc.tcp://127.0.0.1:4840/freeopcua/server/", key="opc_url")
-    opc_node = st.text_input("Node ID:", value="ns=2;s=Production_Count", key="opc_node")
+    opc_url = st.text_input("URL du serveur OPC UA:", value="opc.tcp://opcuademo.sterfive.com:26543", key="opc_url")
+    opc_node = st.text_input("Node ID:", value="ns=0;i=2258", key="opc_node")
 
     if st.button("🔗 Se connecter et lire pendant 10 secondes", key="opc_read_stream"):
         if opc_url and opc_node:
@@ -524,6 +528,31 @@ with tab_opcua:
                         if not chart_df.empty:
                             st.line_chart(chart_df.set_index("timestamp")["value_numeric"])
                         st.dataframe(machine_df, use_container_width=True)
+
+                        # --- أزرار OPC UA الجديدة ---
+                        st.divider()
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            if st.button(t["opcua_download"]):
+                                report_text = f"Rapport OPC UA\n\nServeur: {opc_url}\nNode: {opc_node}\n\nValeurs lues:\n{machine_df.to_string()}"
+                                pdf_file = PDFExporter.generate(report_text, st.session_state.lang)
+                                st.download_button(
+                                    label="Cliquez ici pour télécharger",
+                                    data=pdf_file,
+                                    file_name="rapport_opcua.pdf",
+                                    mime="application/pdf"
+                                )
+                        
+                        with col2:
+                            if st.button(t["opcua_ai"]):
+                                with st.spinner("L'IA analyse..."):
+                                    machine_pl = pl.from_pandas(machine_df)
+                                    report, success = ai_assistant.generate_report(machine_pl, st.session_state.lang)
+                                    if success:
+                                        st.info(report)
+                                    else:
+                                        st.error(report)
                     else:
                         st.warning("Aucune valeur n'a été reçue du serveur OPC UA.")
                 except Exception as exc:
