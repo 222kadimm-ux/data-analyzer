@@ -11,14 +11,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
         cache: 'pip'
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements-test.txt
+        pip install pytest
+        # تثبيت مكتبات المشروع الأساسية (بما فيها asyncua)
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        # تثبيت asyncua بشكل صريح (لأننا نستخدمها في OPC UA)
+        pip install asyncua
+
     - name: Run tests
-      run: pytest tests/ test_app.py -v
+      run: |
+        pytest tests/ test_app.py -v
