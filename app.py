@@ -6,7 +6,6 @@ import io
 import json
 import uuid
 import datetime
-import sentry_sdk
 import gspread
 import extra_streamlit_components as stx
 from google.oauth2.service_account import Credentials
@@ -17,18 +16,23 @@ from auth import create_user, verify_user, login_user, logout_user
 from core_engine import DataEngine
 from ai_engine import AIAssistant
 from pdf_exporter import PDFExporter
-from settings import SENTRY_DSN
+from settings import SENTRY_DSN, DATABASE_URL
 
 # ==========================================
-# 1. إعدادات الصفحة والمراقبة
+# 1. إعدادات الصفحة والمراقبة (مع حماية Sentry)
 # ==========================================
+try:
+    import sentry_sdk
+except ImportError:
+    sentry_sdk = None
+
 st.set_page_config(page_title="Enterprise Data Analyzer", page_icon="🏭", layout="wide")
 
-try:
-    if SENTRY_DSN:
+if sentry_sdk and SENTRY_DSN:
+    try:
         sentry_sdk.init(dsn=SENTRY_DSN, traces_sample_rate=1.0, send_default_pii=False)
-except Exception:
-    pass
+    except Exception:
+        pass
 
 st.markdown("""
     <style>
@@ -165,22 +169,26 @@ def load_from_sql(db_url, table_name, limit=10000):
         return None
 
 def delete_my_account(email):
-    conn = get_db_connection()
-    cur = conn.cursor()
+    conn = cur = None
     try:
+        conn = get_db_connection()
+        cur = conn.cursor()
         cur.execute("DELETE FROM user_files WHERE user_email = %s", (email,))
         cur.execute("DELETE FROM users WHERE email = %s", (email,))
         conn.commit()
         return True
     except: return False
-    finally: cur.close(); conn.close()
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
 
 # ==========================================
 # 5. تهيئة الجلسة
 # ==========================================
 if 'db_initialized' not in st.session_state:
-    init_db()
-    st.session_state.db_initialized = True
+    st.session_state.db_initialized = init_db()
+if not st.session_state.db_initialized:
+    st.sidebar.warning("وضع التشغيل التجريبي: DATABASE_URL غير مضبوط. تحليل Excel/CSV متاح، لكن حفظ الملفات وتسجيل الدخول يحتاجان قاعدة PostgreSQL.")
 
 if 'df' not in st.session_state: st.session_state.df = None
 if 'raw_df' not in st.session_state: st.session_state.raw_df = None
@@ -196,13 +204,13 @@ ai_assistant = AIAssistant()
 # 6. القائمة الجانبية
 # ==========================================
 st.sidebar.title("Enterprise Data Analyzer")
-st.sidebar.info("💾 Sauvegarde automatique activée / الحفظ التلقائي مفعل")
+st.sidebar.info("💾 حفظ دائم مفعّل / Sauvegarde permanente activée" if DATABASE_URL else "🧪 وضع تجريبي: التحليل يعمل، لكن الحفظ الدائم يحتاج قاعدة بيانات / Demo mode: persistent storage requires a database.")
 
 st.sidebar.divider()
 st.sidebar.subheader(t["ai_privacy"])
 ai_enabled = st.sidebar.checkbox(t["ai_toggle"], value=True)
 
-if not st.session_state.logged_in:
+if not st.session_state.logged_in and DATABASE_URL:
     with st.sidebar.expander(t["login_portal"]):
         login_email = st.text_input(t["email"], key="l_email")
         login_pass = st.text_input(t["password"], type="password", key="l_pass")
@@ -216,6 +224,8 @@ if not st.session_state.logged_in:
         if st.button("S'inscrire / إنشاء حساب"):
             if len(new_pass) < 6: st.warning("Short / قصيرة")
             elif create_user(new_email, new_pass): st.success("✅"); st.rerun()
+elif not DATABASE_URL:
+    st.sidebar.caption("تسجيل الدخول معطّل حتى إعداد DATABASE_URL.")
 else:
     st.sidebar.write(f"👤 {st.session_state.user_email}")
     if st.sidebar.button(t["logout"]): logout_user()
@@ -369,7 +379,6 @@ with tab_dashboard:
         c1, c2 = st.columns(2)
         c1.download_button("Télécharger CSV", df_export.to_csv(index=False).encode('utf-8-sig'), "data.csv", "text/csv")
         
-        # إصلاح: إزالة المنطقة الزمنية لتجنب خطأ Excel
         excel_buffer = io.BytesIO()
         df_export_excel = df_export.copy()
         for col in df_export_excel.select_dtypes(include=['datetimetz']).columns:
@@ -495,8 +504,8 @@ with tab_opcua:
     st.subheader("🔌 Connexion aux Machines (OPC UA)")
     st.info("💡 Lance une lecture continue de 10 secondes sur le serveur OPC UA, puis affiche les valeurs collectées.")
 
-    opc_url = st.text_input("URL du serveur OPC UA:", placeholder="opc.tcp://localhost:4840", key="opc_url")
-    opc_node = st.text_input("Node ID:", placeholder="ns=2;s=Temperature", key="opc_node")
+    opc_url = st.text_input("URL du serveur OPC UA:", value="opc.tcp://127.0.0.1:4840/freeopcua/server/", key="opc_url")
+    opc_node = st.text_input("Node ID:", value="ns=2;s=Production_Count", key="opc_node")
 
     if st.button("🔗 Se connecter et lire pendant 10 secondes", key="opc_read_stream"):
         if opc_url and opc_node:
