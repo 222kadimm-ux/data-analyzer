@@ -91,7 +91,8 @@ t = {
         "ai_disabled": "⚠️ L'IA est désactivée.",
         "access_denied": "❌ Accès refusé à ce fichier.",
         "opcua_download": "📥 Générer le rapport PDF",
-        "opcua_ai": "🤖 Analyser avec l'IA"
+        "opcua_ai": "🤖 Analyser avec l'IA",
+        "download_pdf_opcua": "📥 Télécharger le PDF"
     },
     "AR": {
         "title": "🏭 محلل بيانات المؤسسات (OEE & AI)",
@@ -126,7 +127,8 @@ t = {
         "ai_disabled": "⚠️ الذكاء الاصطناعي معطل.",
         "access_denied": "❌ وصول مرفوض لهذا الملف.",
         "opcua_download": "📥 توليد تقرير PDF",
-        "opcua_ai": "🤖 تحليل بالذكاء الاصطناعي"
+        "opcua_ai": "🤖 تحليل بالذكاء الاصطناعي",
+        "download_pdf_opcua": "📥 تحميل تقرير PDF"
     }
 }[st.session_state.lang]
 
@@ -201,6 +203,7 @@ if 'user_email' not in st.session_state: st.session_state.user_email = None
 if 'last_uploaded_sig' not in st.session_state: st.session_state.last_uploaded_sig = None
 if 'ai_report' not in st.session_state: st.session_state.ai_report = None
 if 'ai_error' not in st.session_state: st.session_state.ai_error = None
+if 'machine_df' not in st.session_state: st.session_state.machine_df = None
 if 'opcua_pdf' not in st.session_state: st.session_state.opcua_pdf = None
 
 ai_assistant = AIAssistant()
@@ -522,6 +525,7 @@ with tab_opcua:
                     if data:
                         machine_df = pd.DataFrame(data)
                         machine_df["timestamp"] = pd.to_datetime(machine_df["timestamp"], unit="s", errors="coerce")
+                        st.session_state.machine_df = machine_df
                         st.success(f"✅ {len(machine_df)} valeurs collectées.")
                         st.metric("Dernière valeur lue", str(machine_df["value"].iloc[-1]))
                         machine_df["value_numeric"] = pd.to_numeric(machine_df["value"], errors="coerce")
@@ -529,37 +533,39 @@ with tab_opcua:
                         if not chart_df.empty:
                             st.line_chart(chart_df.set_index("timestamp")["value_numeric"])
                         st.dataframe(machine_df, use_container_width=True)
-
-                        # --- أزرار OPC UA ---
-                        st.divider()
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            if st.button(t["opcua_download"]):
-                                report_text = f"Rapport OPC UA\n\nServeur: {opc_url}\nNode: {opc_node}\n\nValeurs lues:\n{machine_df.to_string()}"
-                                pdf_file = PDFExporter.generate(report_text, st.session_state.lang)
-                                st.session_state.opcua_pdf = pdf_file
-                            
-                            if st.session_state.opcua_pdf:
-                                st.download_button(
-                                    label="📥 Cliquez ici pour télécharger",
-                                    data=st.session_state.opcua_pdf,
-                                    file_name="rapport_opcua.pdf",
-                                    mime="application/pdf"
-                                )
-                        
-                        with col2:
-                            if st.button(t["opcua_ai"]):
-                                with st.spinner("L'IA analyse..."):
-                                    machine_pl = pl.from_pandas(machine_df)
-                                    report, success = ai_assistant.generate_report(machine_pl, st.session_state.lang)
-                                    if success:
-                                        st.info(report)
-                                    else:
-                                        st.error(report)
                     else:
                         st.warning("Aucune valeur n'a été reçue du serveur OPC UA.")
                 except Exception as exc:
                     st.error(f"❌ Erreur OPC UA : {exc}")
         else:
             st.warning("⚠️ Veuillez entrer l'URL et le Node ID.")
+
+    # --- الأزرار تظهر خارج زر الاتصال ---
+    if st.session_state.machine_df is not None:
+        st.divider()
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button(t["opcua_download"], key="btn_gen_pdf"):
+                report_text = f"Rapport OPC UA\n\nServeur: {opc_url}\nNode: {opc_node}\n\nValeurs lues:\n{st.session_state.machine_df.to_string()}"
+                pdf_file = PDFExporter.generate(report_text, st.session_state.lang)
+                st.session_state.opcua_pdf = pdf_file
+            
+            if st.session_state.opcua_pdf:
+                st.download_button(
+                    label="📥 Télécharger le PDF",
+                    data=st.session_state.opcua_pdf,
+                    file_name="rapport_opcua.pdf",
+                    mime="application/pdf",
+                    key="btn_dl_pdf"
+                )
+        
+        with col2:
+            if st.button(t["opcua_ai"], key="btn_ai_analyze"):
+                with st.spinner("L'IA analyse..."):
+                    machine_pl = pl.from_pandas(st.session_state.machine_df)
+                    report, success = ai_assistant.generate_report(machine_pl, st.session_state.lang)
+                    if success:
+                        st.info(report)
+                    else:
+                        st.error(report)
